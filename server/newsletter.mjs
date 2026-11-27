@@ -12,14 +12,15 @@ export function unsubscribeLink(config, subscriptionId) {
 
 export function createNewsletter(config, db, fetcher = fetch) {
   const options = config.newsletter;
-  const status = db.prepare('SELECT state, requested_at FROM newsletter WHERE email = ?');
   const save = db.prepare(`INSERT INTO newsletter (
     email, subscription_id, state, verification_hash, expires_at, consent_version, requested_at
   ) VALUES (?, ?, 'pending', ?, ?, ?, ?)
   ON CONFLICT(email) DO UPDATE SET subscription_id = excluded.subscription_id, state = 'pending',
     verification_hash = excluded.verification_hash, expires_at = excluded.expires_at,
     consent_version = excluded.consent_version, requested_at = excluded.requested_at,
-    confirmed_at = NULL, unsubscribed_at = NULL`);
+    confirmed_at = NULL, unsubscribed_at = NULL
+  WHERE newsletter.state <> 'active' AND newsletter.requested_at <= ?
+  RETURNING subscription_id`);
   const confirm = db.prepare(`UPDATE newsletter SET state = 'active', confirmed_at = ?,
     verification_hash = NULL, expires_at = NULL WHERE verification_hash = ? AND state = 'pending' AND expires_at > ?`);
   const saveActiveLocal = db.prepare(`INSERT INTO newsletter (
@@ -39,14 +40,12 @@ export function createNewsletter(config, db, fetcher = fetch) {
       throw new HttpError(400, 'Enter a valid email address and agree to receive DEBORRA emails.');
     }
     const now = Date.now();
-    purge.run(now - day);
-    const existing = status.get(email);
-    if (existing?.state === 'active' || (existing && now - existing.requested_at < 900000)) return;
+    await purge.run(now - day);
 
     const token = randomToken();
     const hash = sha256(token);
     const id = randomToken();
-    save.run(email, id, hash, now + day, options.consentVersion, now);
+    if (!(await save.get(email, id, hash, now + day, options.consentVersion, now, now - 900000))) return;
     const confirmation = `${config.origin}/newsletter/confirm?t=${token}`;
 
     try {
@@ -62,32 +61,32 @@ export function createNewsletter(config, db, fetcher = fetch) {
       if (!response.ok) throw new Error('Email provider rejected request');
       await response.body?.cancel();
     } catch {
-      retry.run(hash);
+      await retry.run(hash);
       throw new HttpError(503, 'Signup is temporarily unavailable. Please try again in a moment.');
     }
   }
 
-  function change(action, token) {
+  async function change(action, token) {
     const now = Date.now();
     if (action === 'confirm') {
-      return opaquePattern.test(token) && confirm.run(now, sha256(token), now).changes === 1;
+      return opaquePattern.test(token) && (await confirm.run(now, sha256(token), now)).changes === 1;
     }
     const [id, signature, extra] = token.split('.');
     if (extra || !opaquePattern.test(id || '') || !opaquePattern.test(signature || '')) return false;
     const signed = new URL(unsubscribeLink(config, id)).searchParams.get('t').split('.')[1];
     if (!timingSafeEqual(Buffer.from(signed), Buffer.from(signature))) return false;
-    unsubscribe.run(now, id);
+    await unsubscribe.run(now, id);
     return true;
   }
 
-  function subscribeLocal(input) {
+  async function subscribeLocal(input) {
     const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
     if (email.length > 254 || !validEmail.test(email) || input.consent !== true) {
       throw new HttpError(400, 'Enter a valid email address and agree to receive DEBORRA emails.');
     }
     const now = Date.now();
     const id = randomToken();
-    saveActiveLocal.run(email, id, options.consentVersion, now, now);
+    await saveActiveLocal.run(email, id, options.consentVersion, now, now);
     return { accepted: true, mode: 'local', unsubscribeUrl: unsubscribeLink(config, id) };
   }
 

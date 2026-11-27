@@ -107,6 +107,7 @@ export function configFrom(env = process.env) {
     newsletter: {
       enabled: newsletterEnabled,
       localEnabled: nativePreview && env.NEWSLETTER_LOCAL_CAPTURE !== 'false',
+      manageEnabled: newsletterSecret.length >= 32 || nativePreview,
       sender,
       secret: localNewsletterSecret,
       resendKey,

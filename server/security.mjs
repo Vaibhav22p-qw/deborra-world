@@ -14,11 +14,34 @@ export const opaquePattern = /^[A-Za-z0-9_-]{43}$/;
 
 export function clientAddress(request, config) {
   const remote = request.socket.remoteAddress || 'unknown';
-  if (!config.trustedProxy || (remote !== config.trustedProxy && remote !== '::ffff:' + config.trustedProxy)) return remote;
-  const forwarded = request.headers['x-forwarded-for'];
+  if (!config.hosted && (!config.trustedProxy || (remote !== config.trustedProxy && remote !== '::ffff:' + config.trustedProxy))) return remote;
+  const forwarded = config.hosted ? request.headers['x-vercel-forwarded-for'] : request.headers['x-forwarded-for'];
   if (typeof forwarded !== 'string') return remote;
   const address = forwarded.split(',').at(-1).trim();
   return isIP(address) ? address : remote;
+}
+
+export function hostedLimiter(db) {
+  const increment = db.prepare(`
+    INSERT INTO request_windows VALUES (?, 1, ?)
+    ON CONFLICT(bucket) DO UPDATE SET
+      count = CASE WHEN expires_at <= ? THEN 1 ELSE count + 1 END,
+      expires_at = CASE WHEN expires_at <= ? THEN excluded.expires_at ELSE expires_at END
+    WHERE expires_at <= ? OR count < ?
+    RETURNING count
+  `);
+  const purge = db.prepare('DELETE FROM request_windows WHERE expires_at <= ?');
+  let nextCleanup = 0;
+  return async (key, max, windowSeconds) => {
+    const now = Date.now();
+    if (now >= nextCleanup) {
+      nextCleanup = now + 3600000;
+      await purge.run(now);
+    }
+    if (!(await increment.get(sha256(key), now + windowSeconds * 1000, now, now, now, max))) {
+      throw new HttpError(429, 'Too many requests. Please try again shortly.');
+    }
+  };
 }
 
 export function secureHeaders(response, secure, allowRazorpay = false) {

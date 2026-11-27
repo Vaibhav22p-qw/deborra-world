@@ -6,7 +6,7 @@ import { openDatabase } from './database.mjs';
 import { createStore } from './store.mjs';
 import { createNativeStore } from './native-store.mjs';
 import { createNewsletter, emailPage } from './newsletter.mjs';
-import { clientAddress, HttpError, limiter, readBody, readJson, reply, secureHeaders, writeOrigin } from './security.mjs';
+import { clientAddress, hostedLimiter, HttpError, limiter, readBody, readJson, reply, secureHeaders, writeOrigin } from './security.mjs';
 
 const html = 'text/html; charset=utf-8';
 const types = {
@@ -30,17 +30,18 @@ function httpMethod(request, response, ...allowed) {
   throw new HttpError(405, 'This request method is unavailable.');
 }
 
-export async function createApp(config = configFrom(), fetcher = fetch) {
-  const root = await realpath(publicRoot);
-  const database = openDatabase(config.dbPath);
-  const rate = limiter();
-  const store = createStore(config, database, fetcher);
+export async function createRequestHandler(config, fetcher = fetch, options = {}) {
+  const root = options.staticFiles === false ? null : await realpath(publicRoot);
+  const database = Object.hasOwn(options, 'database') ? options.database : openDatabase(config.dbPath);
+  const rate = database?.remote ? hostedLimiter(database) : limiter();
+  const store = config.store.enabled ? createStore(config, database, fetcher) : null;
   const nativeStore = config.nativePreview ? createNativeStore(config, database, fetcher) : null;
-  const newsletter = createNewsletter(config, database, fetcher);
+  const newsletter = config.newsletter.manageEnabled ? createNewsletter(config, database, fetcher) : null;
   const host = new URL(config.origin).host.toLowerCase();
 
   async function serveFile(request, response, url) {
     httpMethod(request, response, 'GET', 'HEAD');
+    if (!root) throw new HttpError(404, 'This page could not be found.');
     let name;
     try {
       name = decodeURIComponent(url.pathname);
@@ -69,7 +70,8 @@ export async function createApp(config = configFrom(), fetcher = fetch) {
     let content = await readFile(file);
     if (extension === '.html') {
       if (config.store.enabled && request.method === 'GET') store.session(request, response);
-      content = content.toString('utf8').replace('<html ', '<html data-server-mode="true" ');
+      content = content.toString('utf8');
+      if (!content.includes('data-server-mode="true"')) content = content.replace('<html ', '<html data-server-mode="true" ');
     } else {
       response.setHeader('Cache-Control', 'public, max-age=300');
     }
@@ -95,6 +97,7 @@ export async function createApp(config = configFrom(), fetcher = fetch) {
       } else if (path === '/api/config') {
         httpMethod(request, response, 'GET', 'HEAD');
         const { enabled, domain, categoryHandles, featuredCollection, accountUrl } = config.store;
+        if (store && request.method === 'GET') store.session(request, response);
         reply(request, response, 200, {
           store: { enabled, domain, categoryHandles, featuredCollection, accountUrl },
           nativeStore: config.nativePreview,
@@ -107,52 +110,52 @@ export async function createApp(config = configFrom(), fetcher = fetch) {
         });
       } else if (path === '/api/shop/catalog') {
         httpMethod(request, response, 'GET', 'HEAD');
-        rate('native-catalog:' + address, 120, 60);
+        await rate('native-catalog:' + address, 120, 60);
         reply(request, response, 200, nativeStore.getCatalog());
       } else if (path === '/api/shop/checkout') {
         httpMethod(request, response, 'POST');
         writeOrigin(request, config);
-        rate('native-checkout:' + address, 30, 300);
+        await rate('native-checkout:' + address, 30, 300);
         const input = await readJson(request);
         const result = await nativeStore.createOrder(input);
         reply(request, response, 201, result);
       } else if (path === '/api/shop/razorpay/verify') {
         httpMethod(request, response, 'POST');
         writeOrigin(request, config);
-        rate('native-verify:' + address, 30, 300);
+        await rate('native-verify:' + address, 30, 300);
         const input = await readJson(request);
         const result = nativeStore.verifyRazorpayPayment(input);
         reply(request, response, 200, result);
       } else if (path === '/api/shop/orders/track') {
         httpMethod(request, response, 'GET', 'HEAD');
-        rate('native-track:' + address, 40, 300);
+        await rate('native-track:' + address, 40, 300);
         const result = nativeStore.trackOrder(url.searchParams.get('id'), url.searchParams.get('contact'));
         reply(request, response, 200, result);
       } else if (path === '/api/contact') {
         httpMethod(request, response, 'POST');
         writeOrigin(request, config);
-        rate('contact:' + address, 20, 3600);
+        await rate('contact:' + address, 20, 3600);
         const input = await readJson(request);
         const result = nativeStore.createSupportTicket(input);
         reply(request, response, 201, result);
       } else if (path === '/api/waitlist') {
         httpMethod(request, response, 'POST');
         writeOrigin(request, config);
-        rate('waitlist:' + address, 30, 3600);
+        await rate('waitlist:' + address, 30, 3600);
         const input = await readJson(request);
         const result = nativeStore.joinWaitlist(input);
         reply(request, response, 201, result);
       } else if (path.startsWith('/api/store/')) {
         httpMethod(request, response, 'GET', 'HEAD');
         if (!config.store.enabled) throw new HttpError(404, 'Shopify Storefront integration is disabled.');
-        rate('catalogue:' + address, 120, 60);
+        await rate('catalogue:' + address, 120, 60);
         const result = await store.catalogue(path.slice('/api/store/'.length), url.searchParams, address);
         reply(request, response, 200, result);
       } else if (path === '/api/cart') {
         httpMethod(request, response, 'GET', 'POST');
         if (!config.store.enabled) throw new HttpError(404, 'Shopify Storefront cart is disabled.');
         if (request.method === 'POST') writeOrigin(request, config);
-        rate('cart:' + address, 65, 60);
+        await rate('cart:' + address, 65, 60);
         const command = request.method === 'POST' ? await readJson(request) : { action: 'read' };
         const session = store.session(request, response);
         const result = await store.cart(session, command, address);
@@ -163,26 +166,26 @@ export async function createApp(config = configFrom(), fetcher = fetch) {
           throw new HttpError(404, 'Signups are currently closed.');
         }
         writeOrigin(request, config);
-        rate('signup:' + address, 12, 3600);
+        await rate('signup:' + address, 12, 3600);
         const input = await readJson(request);
         if (config.newsletter.enabled) {
           await newsletter.subscribe(input);
           reply(request, response, 202, { accepted: true, mode: 'resend' });
         } else {
-          const result = newsletter.subscribeLocal(input);
+          const result = await newsletter.subscribeLocal(input);
           reply(request, response, 201, result);
         }
       } else if (path === '/newsletter/confirm' || path === '/newsletter/unsubscribe') {
         httpMethod(request, response, 'GET', 'HEAD', 'POST');
-        if (!config.newsletter.enabled && !config.newsletter.localEnabled) throw new HttpError(404, 'This page could not be found.');
+        if (!newsletter) throw new HttpError(404, 'This page could not be found.');
         // Keep the form's Origin header and avoid passing its token in a referrer URL.
         response.setHeader('Referrer-Policy', 'strict-origin');
         const action = path.slice('/newsletter/'.length);
         if (request.method === 'POST') {
           writeOrigin(request, config);
-          rate('email-action:' + address, 30, 60);
+          await rate('email-action:' + address, 30, 60);
           const form = new URLSearchParams(await readBody(request, 'application/x-www-form-urlencoded'));
-          const result = newsletter.change(action, form.get('token') || '');
+          const result = await newsletter.change(action, form.get('token') || '');
           reply(request, response, result ? 200 : 400, emailPage(action, '', result), html);
         } else {
           reply(request, response, 200, emailPage(action, url.searchParams.get('t') || ''), html);
@@ -200,6 +203,11 @@ export async function createApp(config = configFrom(), fetcher = fetch) {
     }
   }
 
+  return { handle, database };
+}
+
+export async function createApp(config = configFrom(), fetcher = fetch) {
+  const { handle, database } = await createRequestHandler(config, fetcher);
   const server = createServer(
     {
       maxHeaderSize: 8192,

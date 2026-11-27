@@ -75,6 +75,13 @@ export function createStore(config, db, fetcher = fetch) {
   const reserveAdd = db.prepare('INSERT INTO cart_adds (session_hash, operation_id, variant_id, quantity, created_at) VALUES (?, ?, ?, ?, ?)');
   const finishAdd = db.prepare('UPDATE cart_adds SET completed = 1 WHERE session_hash = ? AND operation_id = ?');
   const removeAdd = db.prepare('DELETE FROM cart_adds WHERE session_hash = ? AND operation_id = ?');
+  const claim = db.prepare(`
+    INSERT INTO cart_locks VALUES (?, ?, ?)
+    ON CONFLICT(session_hash) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at
+    WHERE expires_at <= ? RETURNING owner
+  `);
+  const release = db.prepare('DELETE FROM cart_locks WHERE session_hash = ? AND owner = ?');
+  const purgeLocks = db.prepare('DELETE FROM cart_locks WHERE expires_at <= ?');
   let lastPurge = 0;
 
   async function call(document, variables, address) {
@@ -130,14 +137,13 @@ export function createStore(config, db, fetcher = fetch) {
     const now = Date.now();
     const expiry = now - maxAge * 1000;
     if (now - lastPurge > 3600000) {
-      purge.run(expiry);
-      purgeAdds.run(expiry);
       lastPurge = now;
+      await Promise.all([purge.run(expiry), purgeAdds.run(expiry), purgeLocks.run(now)]);
     }
-    const savedCart = lookup.get(sessionHash, expiry)?.cart_id;
+    const savedCart = (await lookup.get(sessionHash, expiry))?.cart_id;
     const cart = await readCart(savedCart, address);
-    if (cart) touch.run(now, sessionHash);
-    else if (savedCart) upsert.run(sessionHash, null, now);
+    if (cart) await touch.run(now, sessionHash);
+    else if (savedCart) await upsert.run(sessionHash, null, now);
     if (command.action === 'read') return snapshot(cart);
 
     if (command.action === 'checkout') {
@@ -175,7 +181,7 @@ export function createStore(config, db, fetcher = fetch) {
     } else throw new HttpError(400, 'Unknown cart action.');
 
     const outcome = (await call(mutations[action], variables, address))[resultFields[action]];
-    if (outcome.cart?.id) upsert.run(sessionHash, outcome.cart.id, Date.now());
+    if (outcome.cart?.id) await upsert.run(sessionHash, outcome.cart.id, Date.now());
     if (outcome.userErrors?.length) throw new HttpError(409, 'The bag change couldn’t be completed. Check the product or quantity and try again.');
     const notice = outcome.warnings?.length ? 'Your bag was adjusted to match current availability.' : '';
     return snapshot(outcome.cart || cart, notice);
@@ -190,31 +196,45 @@ export function createStore(config, db, fetcher = fetch) {
       throw new HttpError(400, 'Choose an available product and quantity.');
     }
 
-    const earlier = findAdd.get(sessionHash, operationId);
+    const earlier = await findAdd.get(sessionHash, operationId);
     if (earlier) {
       if (earlier.variant_id !== variantId || earlier.quantity !== quantity) throw new HttpError(409, 'Start a new bag change.');
       if (!earlier.completed) throw new HttpError(409, 'Check your bag before adding this product again.');
       return operate(sessionHash, { action: 'read' }, address);
     }
 
-    reserveAdd.run(sessionHash, operationId, variantId, quantity, Date.now());
+    await reserveAdd.run(sessionHash, operationId, variantId, quantity, Date.now());
     try {
       const result = await operate(sessionHash, command, address);
-      finishAdd.run(sessionHash, operationId);
+      await finishAdd.run(sessionHash, operationId);
       return result;
     } catch (error) {
-      if (error instanceof HttpError && error.status < 500) removeAdd.run(sessionHash, operationId);
+      if (error instanceof HttpError && error.status < 500) await removeAdd.run(sessionHash, operationId);
       throw error;
     }
   }
 
   function cart(sessionHash, command, address) {
+    if (db.remote) return remoteCart(sessionHash, command, address);
     const previous = locks.get(sessionHash) || Promise.resolve();
     const current = previous.catch(() => {}).then(() => execute(sessionHash, command, address));
     locks.set(sessionHash, current);
     return current.finally(() => {
       if (locks.get(sessionHash) === current) locks.delete(sessionHash);
     });
+  }
+
+  async function remoteCart(sessionHash, command, address) {
+    const owner = randomToken();
+    const now = Date.now();
+    if (!(await claim.get(sessionHash, owner, now + 45000, now))) {
+      throw new HttpError(409, 'Your bag is updating. Please try again shortly.');
+    }
+    try {
+      return await execute(sessionHash, command, address);
+    } finally {
+      await release.run(sessionHash, owner).catch(() => {});
+    }
   }
 
   return { catalogue, session, cart };

@@ -4,6 +4,7 @@ node_modules/
 !.env.example
 *.log
 .data/
+.vercel/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
