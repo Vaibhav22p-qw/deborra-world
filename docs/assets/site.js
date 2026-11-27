@@ -1,0 +1,173 @@
+import { httpsUrl, settings } from './site-config.js';
+
+const backendPage = document.documentElement.dataset.serverMode === 'true';
+let serverNewsletter = false;
+if (backendPage) {
+  try {
+    const response = await fetch('/api/config', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+    if (response.ok) {
+      const runtime = await response.json();
+      Object.assign(settings.store, runtime.store);
+      serverNewsletter = runtime.newsletter === true;
+    }
+  } catch {
+    // Pre-launch content remains available if the server configuration is temporarily unavailable.
+  }
+}
+
+const menu = document.querySelector('.menu-toggle');
+const navigation = document.querySelector('#primary-navigation');
+const mobile = window.matchMedia('(max-width: 650px)');
+
+function setMenu(open) {
+  menu.setAttribute('aria-expanded', String(open));
+  navigation.hidden = mobile.matches && !open;
+}
+
+function syncMenu() {
+  menu.hidden = !mobile.matches;
+  setMenu(false);
+}
+
+syncMenu();
+mobile.addEventListener('change', syncMenu);
+menu.addEventListener('click', () => setMenu(menu.getAttribute('aria-expanded') !== 'true'));
+document.querySelector('.site-header').addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && menu.getAttribute('aria-expanded') === 'true') {
+    setMenu(false);
+    menu.focus();
+  }
+});
+
+const filters = document.querySelector('.catalog-filters');
+
+if (filters) {
+  const options = [...filters.querySelectorAll('[data-filter]')];
+  const cards = [...document.querySelectorAll('[data-product-group]')];
+  const count = document.querySelector('.catalog-count');
+  filters.hidden = false;
+
+  options.forEach((option) => option.addEventListener('click', () => {
+    const group = option.dataset.filter;
+    let visible = 0;
+
+    for (const card of cards) {
+      const matches = group === 'All concepts' || card.dataset.productGroup === group;
+      card.hidden = !matches;
+      if (matches) visible += 1;
+    }
+
+    options.forEach((item) => item.setAttribute('aria-pressed', String(item === option)));
+    count.textContent = `${visible} ${visible === 1 ? 'concept' : 'concepts'}`;
+  }));
+}
+
+const signup = document.querySelector('#launch-form');
+const launchSignupEndpoint = serverNewsletter
+  ? new URL('/api/newsletter', location.href)
+  : backendPage ? null : httpsUrl(settings.newsletter.endpoint);
+const hostedSignup = httpsUrl(settings.newsletter.signupUrl);
+
+if (signup && launchSignupEndpoint) {
+  const email = signup.elements.namedItem('email');
+  const consent = signup.elements.namedItem('consent');
+  const submit = signup.querySelector('button');
+  const status = signup.querySelector('.form-status');
+
+  signup.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (submit.disabled) return;
+
+    const address = email.value.trim();
+    if (!address || !consent.checked) return;
+
+    const fields = [email, consent, submit];
+    fields.forEach((field) => { field.disabled = true; });
+    signup.setAttribute('aria-busy', 'true');
+    status.textContent = '';
+
+    try {
+      const response = await fetch(launchSignupEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: address, consent: true }),
+        credentials: serverNewsletter ? 'same-origin' : 'omit',
+        redirect: 'error',
+        signal: AbortSignal.timeout(12000)
+      });
+      if (!response.ok) throw new Error('Signup request failed');
+
+      signup.reset();
+      status.textContent = 'Check your inbox to confirm your signup.';
+    } catch {
+      status.textContent = 'We couldn’t process your signup. Please try again in a moment.';
+    } finally {
+      signup.removeAttribute('aria-busy');
+      fields.forEach((field) => { field.disabled = false; });
+    }
+  });
+
+  email.disabled = false;
+  consent.disabled = false;
+  submit.disabled = false;
+  signup.querySelector('[data-form-note]').textContent = '';
+} else if (signup && hostedSignup) {
+  const section = document.querySelector('[data-hosted-signup]');
+  section.querySelector('[data-signup-link]').href = hostedSignup.href;
+  signup.hidden = true;
+  section.hidden = false;
+}
+
+const newsletterPrivacy = document.querySelector('[data-newsletter-privacy]');
+if (newsletterPrivacy && (launchSignupEndpoint || hostedSignup)) {
+  const provider = serverNewsletter ? 'DEBORRA and our email delivery provider' : settings.newsletter.provider || 'our email subscription provider';
+  newsletterPrivacy.textContent = `When you subscribe, your email address and consent are processed by ${provider} to send the updates you request. Use the unsubscribe link in any DEBORRA marketing email to stop future messages.`;
+}
+
+if (/^[^@\s<>]+@[^@\s<>]+\.[^@\s<>&?#]+$/.test(settings.supportEmail)) {
+  for (const link of document.querySelectorAll('[data-support-email]')) {
+    link.href = 'mailto:' + settings.supportEmail;
+    link.textContent = settings.supportEmail;
+    link.hidden = false;
+  }
+}
+
+const instagram = httpsUrl(settings.instagramUrl);
+if (instagram && ['www.instagram.com', 'instagram.com'].includes(instagram.hostname)) {
+  const link = document.querySelector('[data-instagram-link]');
+  link.href = instagram.href;
+  link.hidden = false;
+}
+
+const privacy = httpsUrl(settings.privacyUrl);
+const privacySection = document.querySelector('[data-store-policies="privacyPolicy"]');
+if (privacy && privacySection && !settings.store.enabled) {
+  document.querySelector('.page-intro__lead').textContent = 'Learn how DEBORRA handles information on this website.';
+  const link = document.createElement('a');
+  link.className = 'text-link';
+  link.href = privacy.href;
+  link.textContent = 'Read the DEBORRA privacy policy';
+  privacySection.append(link);
+  privacySection.hidden = false;
+}
+
+const analytics = httpsUrl(settings.analyticsScript);
+if (analytics?.hostname === 'plausible.io' && /^\/js\/pa-[A-Za-z0-9_-]+\.js$/.test(analytics.pathname)) {
+  const notice = document.querySelector('[data-privacy-traffic]');
+  if (notice) notice.textContent = 'This website uses Plausible Analytics for aggregate visitor statistics. The host may also process standard connection information to serve the site.';
+  const tracker = window.plausible || function (...args) {
+    (tracker.q ||= []).push(args);
+  };
+  tracker.init ||= (options = {}) => { tracker.o = options; };
+  tracker.init();
+  window.plausible = tracker;
+  const script = document.createElement('script');
+  script.async = true;
+  script.src = analytics.href;
+  document.head.append(script);
+}
+
+const { enabled, domain } = settings.store;
+if (backendPage && enabled && /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i.test(domain)) {
+  import('./storefront.js').then(({ activateStorefront }) => activateStorefront());
+}

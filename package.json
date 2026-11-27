@@ -1,0 +1,16 @@
+{
+  "name": "deborra-world",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "preview": "node scripts/preview.mjs",
+    "start": "node --experimental-sqlite --env-file-if-exists=.env server/index.mjs",
+    "test": "node --experimental-sqlite --test",
+    "subscribers:export": "node --experimental-sqlite --env-file-if-exists=.env server/export-subscribers.mjs"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
