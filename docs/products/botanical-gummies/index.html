@@ -28,7 +28,7 @@
         <a href="../../">Home</a><a href="../../shop/" class="active" data-store-copy="Shop">Collection</a><a href="../../about/">Our Story</a><a href="../../journal/">Journal</a>
       </nav>
       <div class="header-actions">
-        <a class="button button--header" href="../../#launch-list" data-launch-cta data-dialog-open="launch-dialog">Join the launch list</a>
+        <a class="button button--header" href="../../#launch-list" data-launch-cta data-signup-label="Join the launch list" data-dialog-open="launch-dialog">Order enquiries</a>
         <button class="button button--header" type="button" data-open-cart hidden>Bag</button>
       </div>
     </div>
@@ -44,7 +44,7 @@
           <p class="detail-stage">In exploration</p>
           <p class="detail-lead">The concepts under consideration include amla and chawanprash-inspired gummies. Shilajit gummies are an exploratory idea subject to additional sourcing, safety, formulation and regulatory review.</p>
           <p class="detail-availability">This concept is in development. Release timing and product details are to be confirmed.</p>
-          <a class="button button--primary" href="../../#launch-list" data-dialog-open="launch-dialog">Join the launch list</a>
+          <a class="button button--primary" href="../../#launch-list" data-signup-label="Join the launch list" data-dialog-open="launch-dialog">Ask about availability</a>
           <div class="detail-accordions">
             <details class="accordion"><summary>Ingredients</summary><div class="accordion__body"><p>The featured ingredient ideas are exploratory. A final formula would include an ingredient list, serving guidance and age-appropriate suitability and warnings.</p></div></details>
             <details class="accordion"><summary>Usage &amp; directions</summary><div class="accordion__body"><p>Serving size, age suitability and directions will be available with a confirmed product label.</p></div></details>
@@ -65,7 +65,7 @@
         <nav class="footer-nav" aria-label="Explore">
           <h2>Explore</h2>
           <a href="../../shop/" data-store-copy="Shop">Collection</a><a href="../../about/">Our Story</a><a href="../../quality/">Our Approach</a><a href="../../journal/">Journal</a>
-          <a href="../../#launch-list" data-dialog-open="launch-dialog">Newsletter</a><a data-instagram-link hidden>Instagram</a>
+          <a href="../../#launch-list" data-dialog-open="launch-dialog" data-signup-label="Newsletter">Launch updates</a><a data-instagram-link hidden>Instagram</a>
 
         </nav><nav class="footer-nav" aria-label="Support">
           <h2>Support</h2>
@@ -85,23 +85,25 @@
   <dialog id="launch-dialog" class="site-dialog site-dialog--launch" aria-labelledby="launch-dialog-title">
     <div class="site-dialog__panel">
       <header class="site-dialog__header">
-        <div><p class="eyebrow"><span aria-hidden="true"></span>The launch list</p><h2 id="launch-dialog-title" tabindex="-1" data-dialog-heading>From the <em>beginning.</em></h2></div>
+        <div><p class="eyebrow"><span aria-hidden="true"></span>Launch updates</p><h2 id="launch-dialog-title" tabindex="-1" data-dialog-heading>From the <em>beginning.</em></h2></div>
         <button class="site-dialog__close" type="button" data-dialog-close>Close</button>
       </header>
-      <div class="site-dialog__body"><p class="site-dialog__intro">Product announcements, ingredient stories and occasional offers from DEBORRA.</p><div class="launch-signup">
-      <form class="launch-form" data-launch-form>
+      <div class="site-dialog__body"><p class="site-dialog__intro" data-signup-copy="Product announcements, ingredient stories and occasional offers from DEBORRA.">Speak with DEBORRA about product availability and the first collection.</p><div class="launch-signup">
+      <form class="launch-form" data-launch-form hidden>
         <label for="launch-dialog-email">Email address</label>
         <div class="launch-form__row">
           <input type="email" id="launch-dialog-email" name="email" placeholder="you@example.com" autocomplete="email" maxlength="254" required disabled>
           <button type="submit" class="button button--gold" disabled>Join the list</button>
         </div>
         <label class="check-label"><input type="checkbox" name="consent" required disabled><span>I agree to receive DEBORRA emails. I can unsubscribe at any time. <a href="../../privacy/">Privacy notice</a></span></label>
-        <p class="form-note" data-form-note>Signups open soon.</p>
         <p class="form-status" role="status" aria-live="polite"></p>
       </form>
       <div data-hosted-signup hidden>
         <a class="button button--gold" data-signup-link>Join the list</a>
         <p class="form-note">Confirm your signup by email. You can unsubscribe at any time.</p>
+      </div>
+      <div data-launch-contact>
+        <a class="button button--gold" href="tel:+917715038107">Call DEBORRA · +91 77150 38107</a>
       </div>
     </div></div>
     </div>

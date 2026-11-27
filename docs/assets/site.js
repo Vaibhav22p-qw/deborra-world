@@ -111,15 +111,15 @@ const launchSignupEndpoint = serverNewsletter
 const hostedSignup = httpsUrl(settings.newsletter.signupUrl);
 
 function configureSignup(signup) {
+  if (!launchSignupEndpoint && !hostedSignup) return;
+  signup.closest('.launch-signup').querySelector('[data-launch-contact]').hidden = true;
   if (!launchSignupEndpoint) {
-    if (hostedSignup) {
-      const section = signup.nextElementSibling;
-      section.querySelector('[data-signup-link]').href = hostedSignup.href;
-      signup.hidden = true;
-      section.hidden = false;
-    }
+    const hosted = signup.nextElementSibling;
+    hosted.querySelector('[data-signup-link]').href = hostedSignup.href;
+    hosted.hidden = false;
     return;
   }
+  signup.hidden = false;
   const email = signup.elements.namedItem('email');
   const consent = signup.elements.namedItem('consent');
   const submit = signup.querySelector('button');
@@ -161,10 +161,13 @@ function configureSignup(signup) {
   email.disabled = false;
   consent.disabled = false;
   submit.disabled = false;
-  signup.querySelector('[data-form-note]').textContent = '';
 }
 
 document.querySelectorAll('[data-launch-form]').forEach(configureSignup);
+if (launchSignupEndpoint || hostedSignup) {
+  for (const button of document.querySelectorAll('[data-signup-label]')) button.textContent = button.dataset.signupLabel;
+  for (const paragraph of document.querySelectorAll('[data-signup-copy]')) paragraph.textContent = paragraph.dataset.signupCopy;
+}
 
 const newsletterPrivacy = document.querySelector('[data-newsletter-privacy]');
 if (newsletterPrivacy && (launchSignupEndpoint || hostedSignup)) {

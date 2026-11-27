@@ -458,6 +458,7 @@ select.store-select {
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .email-action .brand-mark { margin-bottom: 2rem; }
 .email-action .button { margin-top: 1rem; }
+.order-actions > p, .order-actions [data-prelaunch-only] > .button { margin-top: .8rem; }
 html:has(.site-dialog[open]) { overflow: hidden; }
 .site-dialog {
   width: min(100% - 1.75rem, 620px);

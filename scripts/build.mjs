@@ -83,7 +83,7 @@ function header(link, route) {
         }).join('')}
       </nav>
       <div class="header-actions">
-        <a class="button button--header" href="${route && route !== 'shop/' ? link('#launch-list') : '#launch-list'}" data-launch-cta${dialogAttribute('#launch-list')}>Join the launch list</a>
+        <a class="button button--header" href="${route && route !== 'shop/' ? link('#launch-list') : '#launch-list'}" data-launch-cta data-signup-label="Join the launch list"${dialogAttribute('#launch-list')}>Order enquiries</a>
         <button class="button button--header" type="button" data-open-cart hidden>Bag</button>
       </div>
     </div>
@@ -101,7 +101,7 @@ function footer(link) {
         ${footerLinks.map(([heading, links]) => `<nav class="footer-nav" aria-label="${heading}">
           <h2>${heading}</h2>
           ${links.map(([label, target]) => `<a href="${link(target)}"${target === 'shop/' ? ' data-store-copy="Shop"' : ''}${dialogAttribute(target)}>${escapeHtml(label)}</a>`).join('')}
-          ${heading === 'Explore' ? `<a href="${link('#launch-list')}"${dialogAttribute('#launch-list')}>Newsletter</a><a data-instagram-link hidden>Instagram</a>` : ''}
+          ${heading === 'Explore' ? `<a href="${link('#launch-list')}"${dialogAttribute('#launch-list')} data-signup-label="Newsletter">Launch updates</a><a data-instagram-link hidden>Instagram</a>` : ''}
           ${heading === 'Support' ? '<a data-account-link hidden>Track an order</a>' : ''}
         </nav>`).join('')}
       </div>
@@ -172,21 +172,27 @@ function articleCard(link, article) {
 
 const launchDescription = 'Product announcements, ingredient stories and occasional offers from DEBORRA.';
 
+function launchIntro(className) {
+  return `<p${className ? ` class="${className}"` : ''} data-signup-copy="${escapeHtml(launchDescription)}">Speak with DEBORRA about product availability and the first collection.</p>`;
+}
+
 function newsletterForm(link, emailId) {
   return `<div class="launch-signup">
-      <form class="launch-form" data-launch-form>
+      <form class="launch-form" data-launch-form hidden>
         <label for="${emailId}">Email address</label>
         <div class="launch-form__row">
           <input type="email" id="${emailId}" name="email" placeholder="you@example.com" autocomplete="email" maxlength="254" required disabled>
           <button type="submit" class="button button--gold" disabled>Join the list</button>
         </div>
         <label class="check-label"><input type="checkbox" name="consent" required disabled><span>I agree to receive DEBORRA emails. I can unsubscribe at any time. <a href="${link('privacy/')}">Privacy notice</a></span></label>
-        <p class="form-note" data-form-note>Signups open soon.</p>
         <p class="form-status" role="status" aria-live="polite"></p>
       </form>
       <div data-hosted-signup hidden>
         <a class="button button--gold" data-signup-link>Join the list</a>
         <p class="form-note">Confirm your signup by email. You can unsubscribe at any time.</p>
+      </div>
+      <div data-launch-contact>
+        ${button(`Call DEBORRA · ${phone}`, phoneHref, 'gold')}
       </div>
     </div>`;
 }
@@ -195,9 +201,9 @@ function newsletter(link) {
   return `<section class="launch" id="launch-list" aria-labelledby="launch-title">
     <div class="container launch__inner">
       <div>
-        ${eyebrow('The launch list')}
+        ${eyebrow('Launch updates')}
         <h2 id="launch-title">From the <em>beginning.</em></h2>
-        <p>${launchDescription}</p>
+        ${launchIntro()}
       </div>
       ${newsletterForm(link, 'launch-email')}
     </div>
@@ -323,11 +329,14 @@ function categoryPage(link, handle) {
   <div data-live-catalog="all" data-category-handle="${handle}" hidden></div>`;
 }
 
-function orderPage(link, label, intro) {
+function orderPage(link, label, intro, checkout = false) {
   return `${pageIntro(link, label, label, intro)}
-  <section class="section"><div class="container prose">
-    <p data-prelaunch-only>DEBORRA is preparing its first release. Call <a href="${phoneHref}">${phone}</a> for help with the collection.</p>
-    <a class="button button--primary" data-account-link hidden>Track an order</a>
+  <section class="section"><div class="container prose order-actions">
+    <div data-prelaunch-only><p>For product availability or order enquiries, reach DEBORRA directly.</p>
+      ${button(`Call DEBORRA · ${phone}`, phoneHref)}
+    </div>
+    ${checkout ? '<button class="button button--primary" type="button" data-open-cart hidden>Open your bag</button>' :
+    '<a class="button button--primary" data-account-link hidden>Track an order</a>'}
     <p>${textLink('View the collection', link('shop/'))}</p>
   </div></section>`;
 }
@@ -351,7 +360,7 @@ function productPage(link, product) {
           <p class="detail-stage">${product.stage}</p>
           <p class="detail-lead">${escapeHtml(product.detail)}</p>
           <p class="detail-availability">This concept is in development. Release timing and product details are to be confirmed.</p>
-          ${button('Join the launch list', link('#launch-list'), 'primary', '#launch-list')}
+          <a class="button button--primary" href="${link('#launch-list')}" data-signup-label="Join the launch list"${dialogAttribute('#launch-list')}>Ask about availability</a>
           <div class="detail-accordions">
             ${details('Ingredients', `<p>${escapeHtml(product.ingredients)}</p>`)}
             ${details('Usage & directions', `<p>${guidance}</p>`)}
@@ -530,8 +539,8 @@ function siteDialog(id, label, title, body, theme = '') {
 
 function siteDialogs(link) {
   const [contact, shipping] = support.slice(0, 2).map(([, page]) => page);
-  const launch = siteDialog('launch-dialog', 'The launch list', 'From the <em>beginning.</em>',
-    `<p class="site-dialog__intro">${launchDescription}</p>${newsletterForm(link, 'launch-dialog-email')}`, 'launch');
+  const launch = siteDialog('launch-dialog', 'Launch updates', 'From the <em>beginning.</em>',
+    `${launchIntro('site-dialog__intro')}${newsletterForm(link, 'launch-dialog-email')}`, 'launch');
   const questions = siteDialog('faq-dialog', 'Customer support', 'Frequently asked <em>questions.</em>', faqContent(link));
   const contactDialog = siteDialog('contact-dialog', 'Customer support', contact.title,
     `<p class="site-dialog__intro">${contact.intro}</p>${proseSections(contact, 'h3')}
@@ -549,7 +558,7 @@ const pages = [
   ...Object.entries(categoryTitles).map(([handle, label]) => [`shop/${handle}/`, {
     title: `${label} | DEBORRA`, noindex: true, body: (link) => categoryPage(link, handle)
   }]),
-  ['checkout/', { title: 'Checkout | DEBORRA', noindex: true, body: (link) => orderPage(link, 'Checkout', 'Choose a product and open your bag to continue to secure checkout.') }],
+  ['checkout/', { title: 'Checkout | DEBORRA', noindex: true, body: (link) => orderPage(link, 'Checkout', 'Choose a product and open your bag to continue to secure checkout.', true) }],
   ['order-confirmation/', { title: 'Order confirmation | DEBORRA', noindex: true, body: (link) => orderPage(link, 'Order confirmation', 'Your order confirmation and tracking link appear at checkout and in the message sent to you.') }],
   ['track-order/', { title: 'Track an order | DEBORRA', noindex: true, body: (link) => orderPage(link, 'Track an order', 'Use the link in your order confirmation or shipping message to see the latest update.') }],
   ['about/', { title: 'Our Story | DEBORRA', body: about }],

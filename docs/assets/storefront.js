@@ -364,24 +364,26 @@ export function activateStorefront() {
     node.hidden = false;
   }
 
-  const cartButton = document.querySelector('[data-open-cart]');
   const cartStatus = element('p', 'store-cart-status');
   cartStatus.setAttribute('role', 'status');
   document.body.append(cartStatus);
-  cartButton.hidden = false;
-  cartButton.addEventListener('click', async () => {
-    cartButton.disabled = true;
-    cartButton.textContent = 'Opening bag…';
-    cartStatus.textContent = '';
-    try {
-      await (await getCart()).showModal();
-    } catch {
-      cartStatus.textContent = 'Your bag couldn’t be opened. Please try again.';
-    } finally {
-      cartButton.disabled = false;
-      cartButton.textContent = 'Bag';
-    }
-  });
+  for (const cartButton of document.querySelectorAll('[data-open-cart]')) {
+    const label = cartButton.textContent;
+    cartButton.hidden = false;
+    cartButton.addEventListener('click', async () => {
+      cartButton.disabled = true;
+      cartButton.textContent = 'Opening bag…';
+      cartStatus.textContent = '';
+      try {
+        await (await getCart()).showModal();
+      } catch {
+        cartStatus.textContent = 'Your bag couldn’t be opened. Please try again.';
+      } finally {
+        cartButton.disabled = false;
+        cartButton.textContent = label;
+      }
+    });
+  }
 
   const catalog = document.querySelector('[data-live-catalog]');
   if (catalog) renderCatalog(catalog);
