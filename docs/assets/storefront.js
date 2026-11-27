@@ -331,9 +331,10 @@ async function renderProduct(target) {
 
 async function renderPolicies(target) {
   const policies = target.dataset.storePolicies.split(' ');
-  const intro = document.querySelector('.page-intro__lead');
+  const scope = target.closest('dialog, main');
+  const intro = scope.querySelector('[data-policy-intro], .page-intro__lead');
   intro.textContent = 'Read the current DEBORRA policies for this website and your orders.';
-  const fallback = document.querySelector('[data-policy-fallback]');
+  const fallback = target.closest('[data-prose-sections]').querySelector('[data-policy-fallback]');
   fallback.hidden = true;
   target.hidden = false;
   target.replaceChildren(element('p', 'store-status', 'Loading the current policies…'));
@@ -344,7 +345,7 @@ async function renderPolicies(target) {
     target.replaceChildren(...policies.map((key) => {
       const url = key === 'privacyPolicy' && customPrivacy ? customPrivacy : httpsUrl(shop[key]?.url);
       const section = element('section');
-      section.append(element('h2', '', policyLabels[key]));
+      section.append(element(scope.matches('dialog') ? 'h3' : 'h2', '', policyLabels[key]));
       section.append(url ? link('Read the policy', url.href) : element('p', '', 'Contact DEBORRA customer support for details.'));
       return section;
     }));
@@ -386,12 +387,18 @@ export function activateStorefront() {
   if (catalog) renderCatalog(catalog);
   const product = document.querySelector('[data-live-product]');
   if (product) renderProduct(product);
-  const policies = document.querySelector('[data-store-policies]');
+  const policies = document.querySelector('main [data-store-policies]');
   if (policies) renderPolicies(policies);
 
-  const faq = document.querySelector('[data-store-faq]');
-  if (faq) {
-    faq.hidden = false;
+  for (const faq of document.querySelectorAll('[data-store-faq]')) faq.hidden = false;
+  if (document.querySelector('main [data-store-faq]')) {
     document.querySelector('.page-intro__lead').textContent = 'Find answers about orders, product information and customer support.';
   }
+
+  function openPolicyDialog(dialog) {
+    const panel = dialog.querySelector('[data-store-policies]');
+    if (panel?.hidden) renderPolicies(panel);
+  }
+  document.addEventListener('deborra:dialog-open', (event) => openPolicyDialog(event.target));
+  for (const dialog of document.querySelectorAll('.site-dialog[open]')) openPolicyDialog(dialog);
 }

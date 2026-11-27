@@ -318,9 +318,13 @@ button { cursor: pointer; }
 .story-panel { display: grid; grid-template-columns: 1fr 1fr; background: #16382c; color: var(--cream); }
 .story-panel__image { position: relative; min-height: 480px; }
 .story-panel__image img { position: absolute; width: 100%; height: 100%; object-fit: cover; object-position: 50% 48%; }
+.story-panel__image figcaption { position: absolute; right: .85rem; bottom: .85rem; padding: .2rem .55rem; background: var(--night); color: var(--cream); font-size: .75rem; }
 .story-panel__copy { align-self: center; padding: clamp(2.1rem, 6vw, 6.3rem) var(--gutter); }
 .story-panel h2 { max-width: 500px; }
 .story-panel__copy > p:not(.eyebrow) { max-width: 435px; margin: 1.2rem 0 1.7rem; color: #e2e5d9; }
+.story-founder { display: grid; justify-items: start; gap: .15rem; width: fit-content; margin-bottom: 1.55rem; padding-inline-start: .85rem; border-inline-start: 1px solid var(--gold); }
+.story-founder .kicker { color: var(--gold); }
+.story-founder a { font: 500 1.7rem/1.1 var(--serif); text-decoration-color: var(--gold); text-underline-offset: .14em; }
 
 .launch { scroll-margin-top: 1.25rem; background: #1b392d; color: var(--cream); }
 .launch__inner { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, .9fr); align-items: center; gap: 2rem 4rem; padding-block: clamp(3.3rem, 6.2vw, 5.4rem); }
@@ -362,6 +366,8 @@ button { cursor: pointer; }
 .breadcrumbs--light { color: var(--muted); }
 .page-intro h1, .detail-copy h1 { margin: .8rem 0 1rem; font-size: clamp(3.75rem, 7.35vw, 7.2rem); letter-spacing: -.055em; }
 .page-intro__lead { max-width: 610px; color: #e0e5d9; font-size: 1.06rem; }
+.about-byline { margin-top: 1rem; color: #edd9b5; }
+.about-byline a { text-underline-offset: .22em; }
 
 .shop-content { padding-top: clamp(2rem, 3.3vw, 3.1rem); }
 .catalog-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .8rem 1.2rem; margin-bottom: 1.6rem; }
@@ -392,11 +398,13 @@ button { cursor: pointer; }
 
 .about-grid .detail-image img { aspect-ratio: 4 / 4.7; object-position: 50% 47%; }
 .prose { max-width: 720px; }
-.prose > section + section, .prose-sections > section + section, .prose > .text-link, .founder { margin-top: 1.8rem; }
+.prose > section + section, .prose-sections > section + section, .prose > .text-link { margin-top: 1.8rem; }
 .prose h2 { margin-bottom: .55rem; font-size: clamp(2.2rem, 4vw, 3.3rem); letter-spacing: -.035em; }
 .prose p { color: var(--muted); }
 .prose p + p { margin-top: .65rem; }
-.founder p:nth-child(2) { margin-top: .08rem; color: var(--ink); font-family: var(--serif); font-size: 1.8rem; }
+.founder { scroll-margin-top: 1.25rem; padding: 1.1rem 1.25rem; border: 1px solid var(--line); border-inline-start: 2px solid var(--gold-dark); background: var(--paper); }
+.founder .kicker { color: var(--gold-dark); }
+.founder h2 { margin: .35rem 0 0; }
 .prose .faq-contact { margin-top: 1.5rem; }
 .contact-phone a { color: var(--ink); font-family: var(--serif); font-size: 2.25rem; line-height: 1; text-decoration-color: #b79963; text-underline-offset: .18em; }
 .article-image { margin-bottom: 2rem; }
@@ -437,6 +445,36 @@ select.store-select {
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .email-action .brand-mark { margin-bottom: 2rem; }
 .email-action .button { margin-top: 1rem; }
+html:has(.site-dialog[open]) { overflow: hidden; }
+.site-dialog {
+  width: min(100% - 1.75rem, 620px);
+  max-height: min(86vh, 760px);
+  max-height: min(86dvh, 760px);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+}
+.site-dialog::backdrop { background: rgb(8 27 21 / 72%); }
+.site-dialog__panel { display: grid; min-width: 0; max-height: inherit; grid-template-rows: auto minmax(0, 1fr); gap: 1.2rem; padding: clamp(1.15rem, 4.5vw, 2.4rem); }
+.site-dialog__header { display: flex; justify-content: space-between; align-items: flex-start; gap: .55rem 1rem; }
+.site-dialog__header h2 { margin-top: .6rem; font-size: clamp(2.65rem, 7.2vw, 4.3rem); letter-spacing: -.045em; }
+.site-dialog__header h2:focus { outline: none; }
+.site-dialog__close { min-height: 44px; padding: .35rem .6rem; border: 1px solid var(--line); background: transparent; color: inherit; font-size: .88rem; }
+.site-dialog__close:hover { border-color: var(--gold-dark); }
+.site-dialog__body { min-width: 0; min-height: 0; margin-inline: -4px; padding-inline: 4px; overflow: auto; overscroll-behavior: contain; }
+.site-dialog__intro { margin-bottom: .95rem; color: var(--muted); }
+.site-dialog .faq-contact { margin-top: 1.25rem; }
+.site-dialog .prose-sections h3 { margin-bottom: .4rem; font-size: clamp(1.75rem, 4.6vw, 2.5rem); }
+.site-dialog .prose-sections > section + section { margin-top: 1.15rem; }
+.site-dialog .prose-sections p + p { margin-top: .45rem; }
+.site-dialog--launch { border-color: var(--gold); background: #1b392d; color: var(--cream); }
+.site-dialog--launch .eyebrow, .site-dialog--launch em { color: var(--gold); }
+.site-dialog--launch .site-dialog__close { border-color: var(--dark-line); }
+.site-dialog--launch .site-dialog__close:hover { border-color: var(--gold); }
+.site-dialog--launch .site-dialog__intro, .site-dialog--launch .form-note { color: #e2e5d9; }
+.site-dialog--launch :focus-visible { outline-color: #f0c881; }
 .server-cart { width: min(100% - 1.5rem, 620px); max-height: min(88vh, 820px); padding: clamp(.95rem, 3vw, 2rem); border: 1px solid var(--line); background: var(--paper); color: var(--ink); }
 .server-cart::backdrop { background: rgb(8 27 21 / 72%); }
 .server-cart__header, .server-cart__total { display: flex; justify-content: space-between; align-items: center; gap: .75rem; }
@@ -507,6 +545,10 @@ select.store-select {
   .product-grid { grid-template-columns: 1fr; gap: 1.15rem; }
   .product-card__image { aspect-ratio: 1.35; }
   .launch-form__row .button { padding-inline: .7rem; }
+  .site-dialog__header { position: relative; display: block; }
+  .site-dialog__header .eyebrow { min-height: 44px; padding-inline-end: 4rem; }
+  .site-dialog__header h2 { font-size: clamp(2.2rem, 9.5vw, 3.25rem); text-wrap: balance; }
+  .site-dialog__close { position: absolute; inset-block-start: 0; inset-inline-end: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,5 +1,47 @@
 import { httpsUrl, settings } from './site-config.js';
 
+const dialogs = [...document.querySelectorAll('.site-dialog')];
+if (dialogs.length && typeof dialogs[0].showModal === 'function') {
+  let activeDialog;
+  let opener;
+
+  for (const trigger of document.querySelectorAll('[data-dialog-open]')) {
+    trigger.setAttribute('aria-haspopup', 'dialog');
+    trigger.setAttribute('aria-controls', trigger.dataset.dialogOpen);
+  }
+
+  document.addEventListener('click', (event) => {
+    const trigger = event.target.closest('a[data-dialog-open]');
+    if (!trigger || event.defaultPrevented || event.button !== 0 || event.metaKey ||
+        event.ctrlKey || event.shiftKey || event.altKey) return;
+    const dialog = document.getElementById(trigger.dataset.dialogOpen);
+    if (!dialogs.includes(dialog)) return;
+
+    event.preventDefault();
+    if (dialog.open) return;
+    const returnTo = activeDialog?.contains(trigger) ? opener : trigger;
+    activeDialog?.close();
+    activeDialog = dialog;
+    opener = returnTo;
+    dialog.showModal();
+    dialog.querySelector('[data-dialog-heading]').focus({ preventScroll: true });
+    dialog.dispatchEvent(new Event('deborra:dialog-open', { bubbles: true }));
+  });
+
+  for (const dialog of dialogs) {
+    dialog.querySelector('[data-dialog-close]').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('click', (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+    dialog.addEventListener('close', () => {
+      if (dialog !== activeDialog || dialog.open) return;
+      activeDialog = undefined;
+      opener?.focus({ preventScroll: true });
+      opener = undefined;
+    });
+  }
+}
+
 const backendPage = document.documentElement.dataset.serverMode === 'true';
 let serverNewsletter = false;
 if (backendPage) {
@@ -62,13 +104,21 @@ if (filters) {
   }));
 }
 
-const signup = document.querySelector('#launch-form');
 const launchSignupEndpoint = serverNewsletter
   ? new URL('/api/newsletter', location.href)
   : backendPage ? null : httpsUrl(settings.newsletter.endpoint);
 const hostedSignup = httpsUrl(settings.newsletter.signupUrl);
 
-if (signup && launchSignupEndpoint) {
+function configureSignup(signup) {
+  if (!launchSignupEndpoint) {
+    if (hostedSignup) {
+      const section = signup.nextElementSibling;
+      section.querySelector('[data-signup-link]').href = hostedSignup.href;
+      signup.hidden = true;
+      section.hidden = false;
+    }
+    return;
+  }
   const email = signup.elements.namedItem('email');
   const consent = signup.elements.namedItem('consent');
   const submit = signup.querySelector('button');
@@ -111,12 +161,9 @@ if (signup && launchSignupEndpoint) {
   consent.disabled = false;
   submit.disabled = false;
   signup.querySelector('[data-form-note]').textContent = '';
-} else if (signup && hostedSignup) {
-  const section = document.querySelector('[data-hosted-signup]');
-  section.querySelector('[data-signup-link]').href = hostedSignup.href;
-  signup.hidden = true;
-  section.hidden = false;
 }
+
+document.querySelectorAll('[data-launch-form]').forEach(configureSignup);
 
 const newsletterPrivacy = document.querySelector('[data-newsletter-privacy]');
 if (newsletterPrivacy && (launchSignupEndpoint || hostedSignup)) {

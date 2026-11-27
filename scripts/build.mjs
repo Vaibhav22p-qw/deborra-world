@@ -6,6 +6,7 @@ import { articles, faqs, products } from './content.mjs';
 const output = fileURLToPath(new URL('../docs/', import.meta.url));
 const phone = '+91 77150 38107';
 const phoneHref = 'tel:+917715038107';
+const founderName = 'Brijesh Mishra';
 const brandDescription = 'DEBORRA is developing botanical hair care and thoughtful wellness concepts for everyday routines. Explore the collection in development.';
 
 const navigation = [
@@ -21,6 +22,13 @@ const footerLinks = [
   ['Information', [['Privacy', 'privacy/'], ['Terms', 'terms/']]]
 ];
 
+const dialogsByDestination = {
+  '#launch-list': 'launch-dialog',
+  'faq/': 'faq-dialog',
+  'contact/': 'contact-dialog',
+  'shipping-returns/': 'shipping-dialog'
+};
+
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
 })[character]);
@@ -34,12 +42,17 @@ function eyebrow(text) {
   return `<p class="eyebrow"><span aria-hidden="true"></span>${escapeHtml(text)}</p>`;
 }
 
-function button(label, url, style = 'primary') {
-  return `<a class="button button--${style}" href="${url}">${escapeHtml(label)}</a>`;
+function dialogAttribute(destination) {
+  const dialog = dialogsByDestination[destination];
+  return dialog ? ` data-dialog-open="${dialog}"` : '';
 }
 
-function textLink(label, url) {
-  return `<a class="text-link" href="${url}">${escapeHtml(label)}</a>`;
+function button(label, url, style = 'primary', destination = '') {
+  return `<a class="button button--${style}" href="${url}"${dialogAttribute(destination)}>${escapeHtml(label)}</a>`;
+}
+
+function textLink(label, url, destination = '') {
+  return `<a class="text-link" href="${url}"${dialogAttribute(destination)}>${escapeHtml(label)}</a>`;
 }
 
 function image(link, filename, alt, extra = '') {
@@ -68,7 +81,7 @@ function header(link, route) {
         }).join('')}
       </nav>
       <div class="header-actions">
-        <a class="button button--header" href="${route && route !== 'shop/' ? link('#launch-list') : '#launch-list'}" data-launch-cta>Join the launch list</a>
+        <a class="button button--header" href="${route && route !== 'shop/' ? link('#launch-list') : '#launch-list'}" data-launch-cta${dialogAttribute('#launch-list')}>Join the launch list</a>
         <button class="button button--header" type="button" data-open-cart hidden>Bag</button>
       </div>
     </div>
@@ -85,8 +98,8 @@ function footer(link) {
         </div>
         ${footerLinks.map(([heading, links]) => `<nav class="footer-nav" aria-label="${heading}">
           <h2>${heading}</h2>
-          ${links.map(([label, target]) => `<a href="${link(target)}"${target === 'shop/' ? ' data-store-copy="Shop"' : ''}>${escapeHtml(label)}</a>`).join('')}
-          ${heading === 'Explore' ? '<a data-instagram-link hidden>Instagram</a>' : ''}
+          ${links.map(([label, target]) => `<a href="${link(target)}"${target === 'shop/' ? ' data-store-copy="Shop"' : ''}${dialogAttribute(target)}>${escapeHtml(label)}</a>`).join('')}
+          ${heading === 'Explore' ? `<a href="${link('#launch-list')}"${dialogAttribute('#launch-list')}>Newsletter</a><a data-instagram-link hidden>Instagram</a>` : ''}
           ${heading === 'Support' ? '<a data-account-link hidden>Track an order</a>' : ''}
         </nav>`).join('')}
       </div>
@@ -118,6 +131,7 @@ function layout(route, { title, description = brandDescription, body, hero = fal
   ${header(link, route)}
   <main id="main" tabindex="-1">${body(link)}</main>
   ${footer(link)}
+  ${siteDialogs(link)}
 </body>
 </html>
 `;
@@ -154,18 +168,14 @@ function articleCard(link, article) {
   </article>`;
 }
 
-function newsletter(link) {
-  return `<section class="launch" id="launch-list" aria-labelledby="launch-title">
-    <div class="container launch__inner">
-      <div>
-        ${eyebrow('The launch list')}
-        <h2 id="launch-title">From the <em>beginning.</em></h2>
-        <p>Product announcements, ingredient stories and occasional offers from DEBORRA.</p>
-      </div>
-      <form id="launch-form" class="launch-form">
-        <label for="launch-email">Email address</label>
+const launchDescription = 'Product announcements, ingredient stories and occasional offers from DEBORRA.';
+
+function newsletterForm(link, emailId) {
+  return `<div class="launch-signup">
+      <form class="launch-form" data-launch-form>
+        <label for="${emailId}">Email address</label>
         <div class="launch-form__row">
-          <input type="email" id="launch-email" name="email" placeholder="you@example.com" autocomplete="email" maxlength="254" required disabled>
+          <input type="email" id="${emailId}" name="email" placeholder="you@example.com" autocomplete="email" maxlength="254" required disabled>
           <button type="submit" class="button button--gold" disabled>Join the list</button>
         </div>
         <label class="check-label"><input type="checkbox" name="consent" required disabled><span>I agree to receive DEBORRA emails. I can unsubscribe at any time. <a href="${link('privacy/')}">Privacy notice</a></span></label>
@@ -176,6 +186,18 @@ function newsletter(link) {
         <a class="button button--gold" data-signup-link>Join the list</a>
         <p class="form-note">Confirm your signup by email. You can unsubscribe at any time.</p>
       </div>
+    </div>`;
+}
+
+function newsletter(link) {
+  return `<section class="launch" id="launch-list" aria-labelledby="launch-title">
+    <div class="container launch__inner">
+      <div>
+        ${eyebrow('The launch list')}
+        <h2 id="launch-title">From the <em>beginning.</em></h2>
+        <p>${launchDescription}</p>
+      </div>
+      ${newsletterForm(link, 'launch-email')}
     </div>
   </section>`;
 }
@@ -220,11 +242,12 @@ function home(link) {
   </section>
   <section class="section section--cream" data-live-catalog="featured" aria-label="Featured products" hidden></section>
   <section class="story-panel" aria-labelledby="story-title">
-    <div class="story-panel__image">${image(link, 'ritual.webp', 'A woman with long, dark hair beside a sunlit stone arch', 'loading="lazy" decoding="async" width="820" height="1024"')}</div>
+    <figure class="story-panel__image">${image(link, 'ritual.webp', 'A woman with long, dark hair beside a sunlit stone arch', 'loading="lazy" decoding="async" width="820" height="1024"')}<figcaption>Illustrative lifestyle imagery</figcaption></figure>
     <div class="story-panel__copy">
       ${eyebrow('Our approach')}
       <h2 id="story-title">Designed with <em>purpose.</em></h2>
       <p>We’re building DEBORRA around useful products, considered packaging and information you can understand at a glance. We’re starting with hair care and exploring wellness as the range grows.</p>
+      <div class="story-founder"><span class="kicker">Founder</span><a href="${link('about/#founder')}">${founderName}</a></div>
       ${button('Discover our approach', link('quality/'), 'outline')}
     </div>
   </section>
@@ -240,13 +263,14 @@ function home(link) {
   ${newsletter(link)}`;
 }
 
-function pageIntro(link, label, title, copy) {
+function pageIntro(link, label, title, copy, extra = '') {
   return `<section class="page-intro">
     <div class="container">
       <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="${link()}">Home</a><span aria-hidden="true">/</span><span aria-current="page">${escapeHtml(label)}</span></nav>
       ${eyebrow(label)}
       <h1>${title}</h1>
       <p class="page-intro__lead">${copy}</p>
+      ${extra}
     </div>
   </section>`;
 }
@@ -300,7 +324,7 @@ function productPage(link, product) {
           <p class="detail-stage">${product.stage}</p>
           <p class="detail-lead">${escapeHtml(product.detail)}</p>
           <p class="detail-availability">This concept is in development. Release timing and product details are to be confirmed.</p>
-          ${button('Join the launch list', link('#launch-list'))}
+          ${button('Join the launch list', link('#launch-list'), 'primary', '#launch-list')}
           <div class="detail-accordions">
             ${details('Ingredients', `<p>${escapeHtml(product.ingredients)}</p>`)}
             ${details('Usage & directions', `<p>${guidance}</p>`)}
@@ -313,29 +337,35 @@ function productPage(link, product) {
   </section>`;
 }
 
-function prosePage(link, { label, title = label, intro, sections, action, policies = [] }) {
-  return `${pageIntro(link, label, title, intro)}
-  <section class="section">
-    <div class="container prose">
+function proseSections({ sections, policies = [] }, headingTag = 'h2') {
+  return `<div data-prose-sections>
       <div class="prose-sections" ${policies.length ? 'data-policy-fallback' : ''}>
-        ${sections.map(([heading, paragraph]) => `<section><h2>${heading}</h2>${paragraph}</section>`).join('')}
+        ${sections.map(([heading, paragraph]) => `<section><${headingTag}>${heading}</${headingTag}>${paragraph}</section>`).join('')}
       </div>
       ${policies.length ? `<div class="prose-sections" data-store-policies="${policies.join(' ')}" hidden></div>` : ''}
-      ${action ? textLink(action[0], link(action[1])) : ''}
+    </div>`;
+}
+
+function prosePage(link, page) {
+  return `${pageIntro(link, page.label, page.title || page.label, page.intro)}
+  <section class="section">
+    <div class="container prose">
+      ${proseSections(page)}
+      ${page.action ? textLink(page.action[0], link(page.action[1]), page.action[1]) : ''}
     </div>
   </section>`;
 }
 
 function about(link) {
-  return `${pageIntro(link, 'Our story', 'The making of <em>DEBORRA.</em>', 'An Indian consumer brand taking shape around thoughtful hair care, wellness and everyday personal care.')}
+  return `${pageIntro(link, 'Our story', 'The making of <em>DEBORRA.</em>', 'An Indian consumer brand taking shape around thoughtful hair care, wellness and everyday personal care.', `<p class="about-byline">Founded by <a href="#founder">${founderName}</a></p>`)}
   <section class="section">
     <div class="container detail-grid about-grid">
       <figure class="detail-image">${image(link, 'ritual.webp', 'A woman with dark, naturally wavy hair in warm light', 'width="820" height="1024"')}<figcaption>Illustrative lifestyle imagery</figcaption></figure>
       <div class="prose">
+        <section class="founder" id="founder" aria-labelledby="founder-name"><p class="kicker">Founder of DEBORRA</p><h2 id="founder-name">${founderName}</h2></section>
         <section><h2>Why we started</h2><p>We wanted everyday care to feel useful, considered and approachable. DEBORRA pairs an emphasis on product quality and clear information with distinctive packaging and a modern experience.</p></section>
         <section><h2>What’s in the name</h2><p>DEBORRA is our stylised spelling of Deborah, a name commonly associated with the Hebrew word for bee. We take inspiration from its sense of diligence and purposeful creation. DEBORRA World is the umbrella for the ranges we may develop over time.</p></section>
         <section><h2>Where we’re going</h2><p>We’re beginning with a focused hair-care assortment and will learn from how people use and buy it. Over time, we aim to build a trusted Indian consumer brand across carefully chosen personal-care and wellness formats.</p><p>We’re starting online. As the range and our operations mature, we may explore selected retail and salon partnerships and bring DEBORRA to more markets.</p></section>
-        <div class="founder"><p class="kicker">Founder</p><p>Brijesh Mishra</p></div>
         ${textLink('Explore our approach', link('quality/'))}
       </div>
     </div>
@@ -382,23 +412,25 @@ function journalArticle(link, article) {
   </article>`;
 }
 
-function faq(link) {
-  return `${pageIntro(link, 'FAQs', 'Frequently asked <em>questions.</em>', 'Find answers about the pre-launch collection, the launch list and customer support.')}
-  <section class="section">
-    <div class="container prose">
-      <div data-prelaunch-only>
-      ${faqs.map(([question, answer]) => details(question, `<p>${escapeHtml(answer)}</p>`)).join('')}
+function faqContent(link) {
+  return `<div data-prelaunch-only>
+        ${faqs.map(([question, answer]) => details(question, `<p>${escapeHtml(answer)}</p>`)).join('')}
       </div>
       <div data-store-faq hidden>
         ${details('How do I place an order?', `<p>Choose a product and available size in the ${textLink('shop', link('shop/'))}, then open your bag and continue to checkout. Available payment methods are shown there.</p>`)}
         ${details('Can I use a discount code?', '<p>Enter your code in the bag or during checkout. The price summary will show any discount that applies to your order.</p>')}
-        ${details('How do I track my order?', '<p>Open the order status link in the confirmation or shipping message. You can also use the Track an order link below.</p>')}
-        ${details('Where can I see shipping fees and return terms?', `<p>Checkout shows the delivery options for your address. See ${textLink('Shipping & returns', link('shipping-returns/'))} for the current policies.</p>`)}
+        ${details('How do I track my order?', '<p>Open the order status link in your confirmation or shipping message, or sign in to <a class="text-link" data-account-link hidden>track an order</a>.</p>')}
+        ${details('Where can I see shipping fees and return terms?', `<p>Checkout shows the delivery options for your address. See ${textLink('Shipping & returns', link('shipping-returns/'), 'shipping-returns/')} for the current policies.</p>`)}
         ${details('Where are ingredients and directions listed?', '<p>Each product page lists the available ingredient information, directions, warnings and product FAQs. Use the final product label for application or serving instructions.</p>')}
-        ${details('How can I manage DEBORRA emails?', `<p>Use the unsubscribe link in any DEBORRA marketing email. Questions can be directed to ${textLink('customer support', link('contact/'))}.</p>`)}
+        ${details('How can I manage DEBORRA emails?', `<p>Use the unsubscribe link in any DEBORRA marketing email. Questions can be directed to ${textLink('customer support', link('contact/'), 'contact/')}.</p>`)}
       </div>
-      <p class="faq-contact">Have another question? ${textLink('Contact DEBORRA', link('contact/'))}</p>
-    </div>
+      <p class="faq-contact">Have another question? ${textLink('Contact DEBORRA', link('contact/'), 'contact/')}</p>`;
+}
+
+function faq(link) {
+  return `${pageIntro(link, 'FAQs', 'Frequently asked <em>questions.</em>', 'Find answers about the pre-launch collection, the launch list and customer support.')}
+  <section class="section">
+    <div class="container prose">${faqContent(link)}</div>
   </section>`;
 }
 
@@ -445,6 +477,32 @@ const support = [
     ]
   }]
 ];
+
+function siteDialog(id, label, title, body, theme = '') {
+  return `<dialog id="${id}" class="site-dialog${theme ? ' site-dialog--' + theme : ''}" aria-labelledby="${id}-title">
+    <div class="site-dialog__panel">
+      <header class="site-dialog__header">
+        <div>${eyebrow(label)}<h2 id="${id}-title" tabindex="-1" data-dialog-heading>${title}</h2></div>
+        <button class="site-dialog__close" type="button" data-dialog-close>Close</button>
+      </header>
+      <div class="site-dialog__body">${body}</div>
+    </div>
+  </dialog>`;
+}
+
+function siteDialogs(link) {
+  const [contact, shipping] = support.slice(0, 2).map(([, page]) => page);
+  const launch = siteDialog('launch-dialog', 'The launch list', 'From the <em>beginning.</em>',
+    `<p class="site-dialog__intro">${launchDescription}</p>${newsletterForm(link, 'launch-dialog-email')}`, 'launch');
+  const questions = siteDialog('faq-dialog', 'Customer support', 'Frequently asked <em>questions.</em>', faqContent(link));
+  const contactDialog = siteDialog('contact-dialog', 'Customer support', contact.title,
+    `<p class="site-dialog__intro">${contact.intro}</p>${proseSections(contact, 'h3')}
+    <p class="faq-contact">${textLink('Read the FAQs', link('faq/'), 'faq/')}</p>`);
+  const shippingDialog = siteDialog('shipping-dialog', 'Customer support', shipping.title,
+    `<p class="site-dialog__intro" data-policy-intro>${shipping.intro}</p>${proseSections(shipping, 'h3')}
+    <p class="faq-contact">${textLink('Contact DEBORRA', link('contact/'), 'contact/')}</p>`);
+  return [launch, questions, contactDialog, shippingDialog].join('\n');
+}
 
 const pages = [
   ['', { title: 'DEBORRA | Elevate everyday care', body: home, hero: true }],
