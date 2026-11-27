@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import test from 'node:test';
@@ -27,8 +27,10 @@ const lineId = 'gid://shopify/CartLine/fixture?cart=' + cartSecret;
 const variantId = 'gid://shopify/ProductVariant/123';
 const domain = 'deborra-fixture.myshopify.com';
 
-test('the pre-launch server serves only public files and emits browser security headers', async () => {
-  const fixture = await openTestServer({}, () => { throw new Error('Unexpected provider request'); });
+test('server serves only public files, emits browser security headers, and exposes config safely', async () => {
+  const fixture = await openTestServer({}, () => {
+    throw new Error('Unexpected provider request');
+  });
   try {
     const page = await fetch(fixture.origin);
     assert.equal(page.status, 200);
@@ -40,9 +42,224 @@ test('the pre-launch server serves only public files and emits browser security 
     assert.equal((await fetch(fixture.origin + '/.env.example')).status, 404);
     assert.equal((await fetch(fixture.origin + '/api/store/products')).status, 404);
     assert.equal((await fetch(fixture.origin + '/api/cart')).status, 404);
-    assert.equal((await fetch(fixture.origin + '/api/config')).headers.get('cache-control'), 'no-store');
+    const configRes = await fetch(fixture.origin + '/api/config');
+    assert.equal(configRes.headers.get('cache-control'), 'no-store');
+    const configJson = await configRes.json();
+    assert.equal(configJson.nativeStore, true);
     assert.throws(() => configFrom({ APP_ORIGIN: 'http://public.example' }), /HTTPS/);
     assert.throws(() => configFrom({ DATABASE_PATH: 'docs/site.sqlite' }), /outside/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('native D2C checkout enforces prices, stock, discounts, COD orders, and secure tracking', async () => {
+  const fixture = await openTestServer({}, () => {
+    throw new Error('Unexpected outbound request for COD');
+  });
+  const { origin } = fixture;
+  try {
+    const catalogRes = await fetch(origin + '/api/shop/catalog');
+    assert.equal(catalogRes.status, 200);
+    const catalog = await catalogRes.json();
+    const rosemary = catalog.products.find((p) => p.slug === 'rosemary-hair-oil');
+    assert.ok(rosemary);
+    const initialStock = rosemary.variants[0].stock;
+
+    // Cross-origin checkout must be blocked
+    const crossOrigin = await fetch(origin + '/api/shop/checkout', {
+      method: 'POST',
+      headers: { Origin: 'https://evil.example', 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    assert.equal(crossOrigin.status, 403);
+
+    // Invalid PIN code rejected
+    const badPin = await fetch(origin + '/api/shop/checkout', {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customerName: 'Aarav Mehta',
+        email: 'aarav@example.com',
+        phone: '9820123456',
+        address: { addressLine1: '12 Palm Grove', city: 'Mumbai', state: 'Maharashtra', pincode: '000123' },
+        items: [{ sku: 'DEB-RHO-100', quantity: 1 }],
+        paymentMethod: 'cod'
+      })
+    });
+    assert.equal(badPin.status, 400);
+
+    // Valid COD order with DEBORRA10 (649 * 2 = 1298 -> 10% off = 130 -> 1168 >= 999 -> free shipping)
+    const orderRes = await fetch(origin + '/api/shop/checkout', {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customerName: 'Aarav Mehta',
+        email: 'aarav@example.com',
+        phone: '9820123456',
+        address: { addressLine1: '12 Palm Grove', city: 'Mumbai', state: 'Maharashtra', pincode: '400050' },
+        items: [{ sku: 'DEB-RHO-100', quantity: 2 }],
+        discountCode: 'DEBORRA10',
+        paymentMethod: 'cod'
+      })
+    });
+    assert.equal(orderRes.status, 201);
+    const { order } = await orderRes.json();
+    assert.match(order.orderId, /^DEB-\d{4}-[A-F0-9]{6}$/);
+    assert.equal(order.subtotal, 1298);
+    assert.equal(order.discountAmount, 130);
+    assert.equal(order.shipping, 0);
+    assert.equal(order.total, 1168);
+    assert.equal(order.status, 'Confirmed');
+
+    // Stock decremented in SQLite
+    const updatedCatalog = await (await fetch(origin + '/api/shop/catalog')).json();
+    const updatedStock = updatedCatalog.products.find((p) => p.slug === 'rosemary-hair-oil').variants[0].stock;
+    assert.equal(updatedStock, initialStock - 2);
+
+    // Order tracking rejects wrong contact, succeeds with right phone or email
+    assert.equal(
+      (await fetch(origin + `/api/shop/orders/track?id=${order.orderId}&contact=9999999999`)).status,
+      404
+    );
+    const tracked = await fetch(origin + `/api/shop/orders/track?id=${order.orderId}&contact=9820123456`);
+    assert.equal(tracked.status, 200);
+    assert.equal((await tracked.json()).order.orderId, order.orderId);
+
+    // Overselling remaining stock fails with 409
+    const oversell = await fetch(origin + '/api/shop/checkout', {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customerName: 'Aarav Mehta',
+        email: 'aarav@example.com',
+        phone: '9820123456',
+        address: { addressLine1: '12 Palm Grove', city: 'Mumbai', state: 'Maharashtra', pincode: '400050' },
+        items: [{ sku: 'DEB-RHO-100', quantity: 40 }],
+        paymentMethod: 'cod'
+      })
+    });
+    assert.equal(oversell.status, 409);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('Razorpay order creation and HMAC-SHA256 payment verification work securely', async () => {
+  const keyId = 'rzp_test_deborra123';
+  const keySecret = 'secret_test_key_for_hmac_verification';
+  const rzpOrderId = 'order_RazorpayFixture1';
+  const rzpPaymentId = 'pay_RazorpayFixture99';
+
+  const fixture = await openTestServer(
+    { RAZORPAY_KEY_ID: keyId, RAZORPAY_KEY_SECRET: keySecret },
+    async (url, request) => {
+      assert.equal(url, 'https://api.razorpay.com/v1/orders');
+      const body = JSON.parse(request.body);
+      assert.equal(body.currency, 'INR');
+      assert.equal(body.amount, 70900); // 649 + 60 shipping = 709 INR = 70900 paise
+      return Response.json({ id: rzpOrderId, amount: body.amount, currency: 'INR' });
+    }
+  );
+  const { origin } = fixture;
+  try {
+    const configRes = await (await fetch(origin + '/api/config')).json();
+    assert.equal(configRes.razorpay.enabled, true);
+    assert.equal(configRes.razorpay.keyId, keyId);
+
+    const pageRes = await fetch(origin);
+    assert.match(pageRes.headers.get('content-security-policy'), /checkout\.razorpay\.com/);
+
+    const checkoutRes = await fetch(origin + '/api/shop/checkout', {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customerName: 'Neha Kulkarni',
+        email: 'neha@example.com',
+        phone: '9811122233',
+        address: { addressLine1: '501 Marine View', city: 'Mumbai', state: 'Maharashtra', pincode: '400020' },
+        items: [{ sku: 'DEB-RHO-100', quantity: 1 }],
+        paymentMethod: 'razorpay'
+      })
+    });
+    assert.equal(checkoutRes.status, 201);
+    const created = await checkoutRes.json();
+    assert.equal(created.razorpayOrderId, rzpOrderId);
+    assert.equal(created.amountPaise, 70900);
+    assert.equal(created.order.status, 'Pending Payment');
+
+    // Invalid signature rejected
+    const badVerify = await fetch(origin + '/api/shop/razorpay/verify', {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        orderId: created.order.orderId,
+        razorpayOrderId: rzpOrderId,
+        razorpayPaymentId: rzpPaymentId,
+        razorpaySignature: '0'.repeat(64)
+      })
+    });
+    assert.equal(badVerify.status, 400);
+
+    // Valid HMAC-SHA256 signature accepted
+    const validSignature = createHmac('sha256', keySecret)
+      .update(`${rzpOrderId}|${rzpPaymentId}`)
+      .digest('hex');
+    const goodVerify = await fetch(origin + '/api/shop/razorpay/verify', {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        orderId: created.order.orderId,
+        razorpayOrderId: rzpOrderId,
+        razorpayPaymentId: rzpPaymentId,
+        razorpaySignature: validSignature
+      })
+    });
+    assert.equal(goodVerify.status, 200);
+    const verified = await goodVerify.json();
+    assert.equal(verified.order.status, 'Confirmed');
+    assert.match(verified.order.paymentStatus, /^Paid /);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('contact support, Phase 2 waitlist, and local newsletter consent work with validation', async () => {
+  const fixture = await openTestServer({}, () => {
+    throw new Error('Unexpected external call');
+  });
+  const { origin } = fixture;
+  try {
+    const contactRes = await fetch(origin + '/api/contact', {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Riya Verma',
+        email: 'riya@example.com',
+        phone: '+91 9876543210',
+        topic: 'Product & Ingredients',
+        message: 'Is Rosemary Hair Oil safe for dry scalp?'
+      })
+    });
+    assert.equal(contactRes.status, 201);
+    assert.match((await contactRes.json()).ticketId, /^SUP-[A-F0-9]{6}$/);
+
+    const waitlistRes = await fetch(origin + '/api/waitlist', {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'riya@example.com', productSlug: 'botanical-gummies' })
+    });
+    assert.equal(waitlistRes.status, 201);
+
+    const newsRes = await fetch(origin + '/api/newsletter', {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'riya@example.com', consent: true })
+    });
+    assert.equal(newsRes.status, 201);
+    const newsJson = await newsRes.json();
+    assert.equal(newsJson.mode, 'local');
+    assert.ok(newsJson.unsubscribeUrl.includes('/newsletter/unsubscribe?t='));
   } finally {
     await fixture.close();
   }
@@ -52,55 +269,74 @@ test('cart changes are same-origin, private to each session and validated by Sho
   let current = null;
   let checkout = `https://${domain}/checkouts/c/fixture`;
   let calls = 0;
-  const fixture = await openTestServer({
-    SHOPIFY_ENABLED: 'true', SHOPIFY_DOMAIN: domain, SHOPIFY_STOREFRONT_PRIVATE_TOKEN: fakeToken
-  }, async (url, request) => {
-    calls += 1;
-    assert.equal(url, `https://${domain}/api/2026-10/graphql.json`);
-    assert.equal(request.headers['Shopify-Storefront-Private-Token'], fakeToken);
-    const { query, variables } = JSON.parse(request.body);
-    if (query.includes('DeborraCartCreate')) {
-      assert.equal(variables.input.lines[0].merchandiseId, variantId);
-      const quantity = variables.input.lines[0].quantity;
-      current = {
-        id: cartId, totalQuantity: quantity, discountCodes: [],
-        cost: { subtotalAmount: money(quantity * 649), totalAmount: money(quantity * 649) },
-        lines: { nodes: [{
-          id: lineId, quantity, cost: { totalAmount: money(quantity * 649) },
-          merchandise: { title: '100 ml', product: { title: 'Rosemary Hair Oil' }, image: null }
-        }] }
-      };
-      return Response.json({ data: { cartCreate: { cart: current, userErrors: [], warnings: [] } } });
+  const fixture = await openTestServer(
+    {
+      SHOPIFY_ENABLED: 'true',
+      SHOPIFY_DOMAIN: domain,
+      SHOPIFY_STOREFRONT_PRIVATE_TOKEN: fakeToken
+    },
+    async (url, request) => {
+      calls += 1;
+      assert.equal(url, `https://${domain}/api/2026-10/graphql.json`);
+      assert.equal(request.headers['Shopify-Storefront-Private-Token'], fakeToken);
+      const { query, variables } = JSON.parse(request.body);
+      if (query.includes('DeborraCartCreate')) {
+        assert.equal(variables.input.lines[0].merchandiseId, variantId);
+        const quantity = variables.input.lines[0].quantity;
+        current = {
+          id: cartId,
+          totalQuantity: quantity,
+          discountCodes: [],
+          cost: { subtotalAmount: money(quantity * 649), totalAmount: money(quantity * 649) },
+          lines: {
+            nodes: [
+              {
+                id: lineId,
+                quantity,
+                cost: { totalAmount: money(quantity * 649) },
+                merchandise: { title: '100 ml', product: { title: 'Rosemary Hair Oil' }, image: null }
+              }
+            ]
+          }
+        };
+        return Response.json({ data: { cartCreate: { cart: current, userErrors: [], warnings: [] } } });
+      }
+      if (query.includes('DeborraCartDiscount')) {
+        assert.equal(variables.cartId, cartId);
+        current.discountCodes = variables.discountCodes.map((code) => ({ code, applicable: code === 'EXAMPLE10' }));
+        return Response.json({ data: { cartDiscountCodesUpdate: { cart: current, userErrors: [], warnings: [] } } });
+      }
+      if (query.includes('DeborraCartUpdate')) {
+        assert.equal(variables.lines[0].id, lineId);
+        current.totalQuantity = variables.lines[0].quantity;
+        current.lines.nodes[0].quantity = current.totalQuantity;
+        return Response.json({ data: { cartLinesUpdate: { cart: current, userErrors: [], warnings: [] } } });
+      }
+      if (query.includes('DeborraCartRemove')) {
+        assert.equal(variables.lineIds[0], lineId);
+        current.totalQuantity = 0;
+        current.lines.nodes = [];
+        return Response.json({ data: { cartLinesRemove: { cart: current, userErrors: [], warnings: [] } } });
+      }
+      if (query.includes('DeborraCheckout')) return Response.json({ data: { cart: { checkoutUrl: checkout } } });
+      assert.match(query, /DeborraCart/);
+      assert.equal(variables.id, cartId);
+      return Response.json({ data: { cart: current } });
     }
-    if (query.includes('DeborraCartDiscount')) {
-      assert.equal(variables.cartId, cartId);
-      current.discountCodes = variables.discountCodes.map((code) => ({ code, applicable: code === 'EXAMPLE10' }));
-      return Response.json({ data: { cartDiscountCodesUpdate: { cart: current, userErrors: [], warnings: [] } } });
-    }
-    if (query.includes('DeborraCartUpdate')) {
-      assert.equal(variables.lines[0].id, lineId);
-      current.totalQuantity = variables.lines[0].quantity;
-      current.lines.nodes[0].quantity = current.totalQuantity;
-      return Response.json({ data: { cartLinesUpdate: { cart: current, userErrors: [], warnings: [] } } });
-    }
-    if (query.includes('DeborraCartRemove')) {
-      assert.equal(variables.lineIds[0], lineId);
-      current.totalQuantity = 0;
-      current.lines.nodes = [];
-      return Response.json({ data: { cartLinesRemove: { cart: current, userErrors: [], warnings: [] } } });
-    }
-    if (query.includes('DeborraCheckout')) return Response.json({ data: { cart: { checkoutUrl: checkout } } });
-    assert.match(query, /DeborraCart/);
-    assert.equal(variables.id, cartId);
-    return Response.json({ data: { cart: current } });
-  });
+  );
   const { origin } = fixture;
   const addCommand = { action: 'add', variantId, quantity: 2, operationId: randomUUID() };
   let cookie = '';
-  const send = (command, from = origin, useCookie = true) => fetch(origin + '/api/cart', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: from, ...(useCookie && cookie ? { Cookie: cookie } : {}) },
-    body: JSON.stringify(command)
-  });
+  const send = (command, from = origin, useCookie = true) =>
+    fetch(origin + '/api/cart', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: from,
+        ...(useCookie && cookie ? { Cookie: cookie } : {})
+      },
+      body: JSON.stringify(command)
+    });
   try {
     const publicConfig = await (await fetch(origin + '/api/config')).text();
     assert.ok(!publicConfig.includes(fakeToken));
@@ -136,23 +372,32 @@ test('cart changes are same-origin, private to each session and validated by Sho
 
 test('newsletter requires consent, confirms once, and accepts a signed unsubscribe link', async () => {
   const outbound = [];
-  const fixture = await openTestServer({
-    NEWSLETTER_ENABLED: 'true', NEWSLETTER_FROM: 'DEBORRA <mail@example.com>',
-    RESEND_API_KEY: 'example-test-key', NEWSLETTER_SECRET: 'test-fixture-only-secret-with-more-than-32-characters'
-  }, async (url, request) => {
-    assert.equal(url, 'https://api.resend.com/emails');
-    outbound.push(JSON.parse(request.body));
-    return Response.json({ id: 'fake-delivery-id' });
-  });
+  const fixture = await openTestServer(
+    {
+      NEWSLETTER_ENABLED: 'true',
+      NEWSLETTER_FROM: 'DEBORRA <mail@example.com>',
+      RESEND_API_KEY: 'example-test-key',
+      NEWSLETTER_SECRET: 'test-fixture-only-secret-with-more-than-32-characters'
+    },
+    async (url, request) => {
+      assert.equal(url, 'https://api.resend.com/emails');
+      outbound.push(JSON.parse(request.body));
+      return Response.json({ id: 'fake-delivery-id' });
+    }
+  );
   const { origin } = fixture;
-  const signup = (consent) => fetch(origin + '/api/newsletter', {
-    method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'visitor@example.com', consent })
-  });
-  const action = (path, token) => fetch(origin + path, {
-    method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ token })
-  });
+  const signup = (consent) =>
+    fetch(origin + '/api/newsletter', {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'visitor@example.com', consent })
+    });
+  const action = (path, token) =>
+    fetch(origin + path, {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token })
+    });
   try {
     assert.equal((await signup(false)).status, 400);
     assert.equal(outbound.length, 0);

@@ -21,11 +21,20 @@ export function clientAddress(request, config) {
   return isIP(address) ? address : remote;
 }
 
-export function secureHeaders(response, secure) {
+export function secureHeaders(response, secure, allowRazorpay = false) {
+  const scriptSrc = allowRazorpay
+    ? "script-src 'self' https://plausible.io https://checkout.razorpay.com"
+    : "script-src 'self' https://plausible.io";
+  const connectSrc = allowRazorpay
+    ? "connect-src 'self' https://plausible.io https://api.razorpay.com https://lumberjack.razorpay.com"
+    : "connect-src 'self' https://plausible.io";
+  const frameSrc = allowRazorpay
+    ? "frame-src https://api.razorpay.com https://checkout.razorpay.com"
+    : "frame-src 'none'";
   const directives = [
-    "default-src 'self'", "base-uri 'none'", "object-src 'none'", "frame-src 'none'",
+    "default-src 'self'", "base-uri 'none'", "object-src 'none'", frameSrc,
     "frame-ancestors 'none'", "form-action 'self'", "style-src 'self'", "font-src 'self'",
-    "script-src 'self' https://plausible.io", "connect-src 'self' https://plausible.io",
+    scriptSrc, connectSrc,
     "img-src 'self' https://cdn.shopify.com https://*.myshopify.com"
   ];
   if (secure) directives.push('upgrade-insecure-requests');
@@ -47,7 +56,7 @@ export function writeOrigin(request, config) {
   }
 }
 
-export async function readBody(request, contentType, limit = 4096) {
+export async function readBody(request, contentType, limit = 8192) {
   if (request.headers['content-type']?.split(';', 1)[0].trim().toLowerCase() !== contentType) {
     throw new HttpError(415, 'Unsupported request format.');
   }

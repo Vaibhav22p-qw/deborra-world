@@ -22,6 +22,12 @@ export function createNewsletter(config, db, fetcher = fetch) {
     confirmed_at = NULL, unsubscribed_at = NULL`);
   const confirm = db.prepare(`UPDATE newsletter SET state = 'active', confirmed_at = ?,
     verification_hash = NULL, expires_at = NULL WHERE verification_hash = ? AND state = 'pending' AND expires_at > ?`);
+  const saveActiveLocal = db.prepare(`INSERT INTO newsletter (
+    email, subscription_id, state, verification_hash, expires_at, consent_version, requested_at, confirmed_at
+  ) VALUES (?, ?, 'active', NULL, NULL, ?, ?, ?)
+  ON CONFLICT(email) DO UPDATE SET subscription_id = excluded.subscription_id, state = 'active',
+    verification_hash = NULL, expires_at = NULL, consent_version = excluded.consent_version,
+    requested_at = excluded.requested_at, confirmed_at = excluded.confirmed_at, unsubscribed_at = NULL`);
   const unsubscribe = db.prepare(`UPDATE newsletter SET state = 'unsubscribed', unsubscribed_at = ?,
     verification_hash = NULL, expires_at = NULL WHERE subscription_id = ? AND state IN ('pending','active')`);
   const retry = db.prepare('UPDATE newsletter SET requested_at = 0 WHERE verification_hash = ?');
@@ -74,7 +80,18 @@ export function createNewsletter(config, db, fetcher = fetch) {
     return true;
   }
 
-  return { subscribe, change };
+  function subscribeLocal(input) {
+    const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
+    if (email.length > 254 || !validEmail.test(email) || input.consent !== true) {
+      throw new HttpError(400, 'Enter a valid email address and agree to receive DEBORRA emails.');
+    }
+    const now = Date.now();
+    const id = randomToken();
+    saveActiveLocal.run(email, id, options.consentVersion, now, now);
+    return { accepted: true, mode: 'local', unsubscribeUrl: unsubscribeLink(config, id) };
+  }
+
+  return { subscribe, subscribeLocal, change };
 }
 
 export function emailPage(action, token, result = null) {

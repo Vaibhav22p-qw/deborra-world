@@ -37,6 +37,46 @@ export function openDatabase(path) {
       confirmed_at INTEGER,
       unsubscribed_at INTEGER
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS product_inventory (
+      sku TEXT PRIMARY KEY,
+      stock INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS orders (
+      order_id TEXT PRIMARY KEY,
+      created_at INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      payment_method TEXT NOT NULL,
+      payment_status TEXT NOT NULL,
+      razorpay_order_id TEXT,
+      razorpay_payment_id TEXT,
+      customer_name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      address_json TEXT NOT NULL,
+      items_json TEXT NOT NULL,
+      discount_code TEXT,
+      subtotal_paise INTEGER NOT NULL,
+      discount_paise INTEGER NOT NULL,
+      shipping_paise INTEGER NOT NULL,
+      total_paise INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS support_tickets (
+      ticket_id TEXT PRIMARY KEY,
+      created_at INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      phone TEXT,
+      topic TEXT NOT NULL,
+      order_id TEXT,
+      message TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS waitlist (
+      email TEXT NOT NULL,
+      product_slug TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (email, product_slug)
+    ) STRICT;
   `);
   return db;
 }

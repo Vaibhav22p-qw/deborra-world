@@ -4,6 +4,7 @@ import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { configFrom, publicRoot } from './config.mjs';
 import { openDatabase } from './database.mjs';
 import { createStore } from './store.mjs';
+import { createNativeStore } from './native-store.mjs';
 import { createNewsletter, emailPage } from './newsletter.mjs';
 import { clientAddress, HttpError, limiter, readBody, readJson, reply, secureHeaders, writeOrigin } from './security.mjs';
 
@@ -34,13 +35,18 @@ export async function createApp(config = configFrom(), fetcher = fetch) {
   const database = openDatabase(config.dbPath);
   const rate = limiter();
   const store = createStore(config, database, fetcher);
+  const nativeStore = createNativeStore(config, database, fetcher);
   const newsletter = createNewsletter(config, database, fetcher);
   const host = new URL(config.origin).host.toLowerCase();
 
   async function serveFile(request, response, url) {
     httpMethod(request, response, 'GET', 'HEAD');
     let name;
-    try { name = decodeURIComponent(url.pathname); } catch { throw new HttpError(400, 'Invalid address.'); }
+    try {
+      name = decodeURIComponent(url.pathname);
+    } catch {
+      throw new HttpError(400, 'Invalid address.');
+    }
     if (name.includes('\\') || name.includes('\0') || name.split('/').some((part) => part.startsWith('.'))) {
       throw new HttpError(404, 'This page could not be found.');
     }
@@ -71,7 +77,7 @@ export async function createApp(config = configFrom(), fetcher = fetch) {
   }
 
   async function handle(request, response) {
-    secureHeaders(response, config.secure);
+    secureHeaders(response, config.secure, config.razorpay.enabled);
     try {
       if (request.headers.host?.toLowerCase() !== host || !request.url?.startsWith('/') || request.url.startsWith('//')) {
         throw new HttpError(400, 'Invalid request address.');
@@ -79,6 +85,7 @@ export async function createApp(config = configFrom(), fetcher = fetch) {
       const url = new URL(request.url, config.origin);
       const path = url.pathname;
       const address = clientAddress(request, config);
+
       if (path === '/api/health') {
         httpMethod(request, response, 'GET', 'HEAD');
         reply(request, response, 200, { ok: true });
@@ -87,17 +94,60 @@ export async function createApp(config = configFrom(), fetcher = fetch) {
         const { enabled, domain, categoryHandles, featuredCollection, accountUrl } = config.store;
         reply(request, response, 200, {
           store: { enabled, domain, categoryHandles, featuredCollection, accountUrl },
-          newsletter: config.newsletter.enabled
+          nativeStore: !enabled,
+          razorpay: { enabled: config.razorpay.enabled, keyId: config.razorpay.keyId },
+          supportEmail: config.supportEmail,
+          newsletter: {
+            resendEnabled: config.newsletter.enabled,
+            localEnabled: config.newsletter.localEnabled
+          }
         });
+      } else if (path === '/api/shop/catalog') {
+        httpMethod(request, response, 'GET', 'HEAD');
+        rate('native-catalog:' + address, 120, 60);
+        reply(request, response, 200, nativeStore.getCatalog());
+      } else if (path === '/api/shop/checkout') {
+        httpMethod(request, response, 'POST');
+        writeOrigin(request, config);
+        rate('native-checkout:' + address, 30, 300);
+        const input = await readJson(request);
+        const result = await nativeStore.createOrder(input);
+        reply(request, response, 201, result);
+      } else if (path === '/api/shop/razorpay/verify') {
+        httpMethod(request, response, 'POST');
+        writeOrigin(request, config);
+        rate('native-verify:' + address, 30, 300);
+        const input = await readJson(request);
+        const result = nativeStore.verifyRazorpayPayment(input);
+        reply(request, response, 200, result);
+      } else if (path === '/api/shop/orders/track') {
+        httpMethod(request, response, 'GET', 'HEAD');
+        rate('native-track:' + address, 40, 300);
+        const result = nativeStore.trackOrder(url.searchParams.get('id'), url.searchParams.get('contact'));
+        reply(request, response, 200, result);
+      } else if (path === '/api/contact') {
+        httpMethod(request, response, 'POST');
+        writeOrigin(request, config);
+        rate('contact:' + address, 20, 3600);
+        const input = await readJson(request);
+        const result = nativeStore.createSupportTicket(input);
+        reply(request, response, 201, result);
+      } else if (path === '/api/waitlist') {
+        httpMethod(request, response, 'POST');
+        writeOrigin(request, config);
+        rate('waitlist:' + address, 30, 3600);
+        const input = await readJson(request);
+        const result = nativeStore.joinWaitlist(input);
+        reply(request, response, 201, result);
       } else if (path.startsWith('/api/store/')) {
         httpMethod(request, response, 'GET', 'HEAD');
-        if (!config.store.enabled) throw new HttpError(404, 'The shop is in pre-launch.');
+        if (!config.store.enabled) throw new HttpError(404, 'Shopify Storefront integration is disabled.');
         rate('catalogue:' + address, 120, 60);
         const result = await store.catalogue(path.slice('/api/store/'.length), url.searchParams, address);
         reply(request, response, 200, result);
       } else if (path === '/api/cart') {
         httpMethod(request, response, 'GET', 'POST');
-        if (!config.store.enabled) throw new HttpError(404, 'The shop is in pre-launch.');
+        if (!config.store.enabled) throw new HttpError(404, 'Shopify Storefront cart is disabled.');
         if (request.method === 'POST') writeOrigin(request, config);
         rate('cart:' + address, 65, 60);
         const command = request.method === 'POST' ? await readJson(request) : { action: 'read' };
@@ -106,12 +156,19 @@ export async function createApp(config = configFrom(), fetcher = fetch) {
         reply(request, response, 200, result);
       } else if (path === '/api/newsletter') {
         httpMethod(request, response, 'POST');
-        if (!config.newsletter.enabled) throw new HttpError(404, 'Signups are currently closed.');
+        if (!config.newsletter.enabled && !config.newsletter.localEnabled) {
+          throw new HttpError(404, 'Signups are currently closed.');
+        }
         writeOrigin(request, config);
         rate('signup:' + address, 12, 3600);
         const input = await readJson(request);
-        await newsletter.subscribe(input);
-        reply(request, response, 202, { accepted: true });
+        if (config.newsletter.enabled) {
+          await newsletter.subscribe(input);
+          reply(request, response, 202, { accepted: true, mode: 'resend' });
+        } else {
+          const result = newsletter.subscribeLocal(input);
+          reply(request, response, 201, result);
+        }
       } else if (path === '/newsletter/confirm' || path === '/newsletter/unsubscribe') {
         httpMethod(request, response, 'GET', 'HEAD', 'POST');
         if (config.newsletter.secret.length < 32) throw new HttpError(404, 'This page could not be found.');
@@ -140,12 +197,15 @@ export async function createApp(config = configFrom(), fetcher = fetch) {
     }
   }
 
-  const server = createServer({
-    maxHeaderSize: 8192,
-    headersTimeout: 10000,
-    requestTimeout: 15000,
-    keepAliveTimeout: 5000
-  }, handle);
+  const server = createServer(
+    {
+      maxHeaderSize: 8192,
+      headersTimeout: 10000,
+      requestTimeout: 15000,
+      keepAliveTimeout: 5000
+    },
+    handle
+  );
   server.maxRequestsPerSocket = 100;
   server.on('close', () => database.close());
   return server;
