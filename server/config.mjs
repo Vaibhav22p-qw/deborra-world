@@ -62,9 +62,10 @@ export function configFrom(env = process.env) {
 
   const razorpayKeyId = env.RAZORPAY_KEY_ID?.trim() || '';
   const razorpayKeySecret = env.RAZORPAY_KEY_SECRET?.trim() || '';
-  const razorpayEnabled = Boolean(razorpayKeyId && razorpayKeySecret);
-  if ((razorpayKeyId && !razorpayKeySecret) || (!razorpayKeyId && razorpayKeySecret)) {
-    throw new Error('Razorpay integration requires both RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.');
+  const nativePreview = env.NATIVE_CHECKOUT_PREVIEW === 'true' && !secure && env.VERCEL !== '1' && !storeEnabled;
+  const razorpayEnabled = nativePreview && Boolean(razorpayKeyId && razorpayKeySecret);
+  if (nativePreview && (razorpayKeyId || razorpayKeySecret) && (!razorpayKeyId.startsWith('rzp_test_') || !razorpayKeySecret)) {
+    throw new Error('The local Razorpay checkout preview requires test credentials.');
   }
 
   const newsletterEnabled = env.NEWSLETTER_ENABLED === 'true';
@@ -92,6 +93,7 @@ export function configFrom(env = process.env) {
     dbPath,
     trustedProxy,
     supportEmail,
+    nativePreview,
     razorpay: { enabled: razorpayEnabled, keyId: razorpayKeyId, keySecret: razorpayKeySecret },
     store: {
       enabled: storeEnabled,
@@ -104,7 +106,7 @@ export function configFrom(env = process.env) {
     },
     newsletter: {
       enabled: newsletterEnabled,
-      localEnabled: env.NEWSLETTER_LOCAL_CAPTURE !== 'false',
+      localEnabled: nativePreview && env.NEWSLETTER_LOCAL_CAPTURE !== 'false',
       sender,
       secret: localNewsletterSecret,
       resendKey,

@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { brand, discountCodes, products } from '../scripts/content.mjs';
+import { brand, discountCodes, products } from '../preview/native-catalog.mjs';
 import { HttpError } from './security.mjs';
 
 const validEmail = /^[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9](?:[A-Z0-9.-]*[A-Z0-9])?\.[A-Z]{2,63}$/i;

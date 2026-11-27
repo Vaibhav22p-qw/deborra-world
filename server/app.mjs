@@ -35,7 +35,7 @@ export async function createApp(config = configFrom(), fetcher = fetch) {
   const database = openDatabase(config.dbPath);
   const rate = limiter();
   const store = createStore(config, database, fetcher);
-  const nativeStore = createNativeStore(config, database, fetcher);
+  const nativeStore = config.nativePreview ? createNativeStore(config, database, fetcher) : null;
   const newsletter = createNewsletter(config, database, fetcher);
   const host = new URL(config.origin).host.toLowerCase();
 
@@ -86,6 +86,9 @@ export async function createApp(config = configFrom(), fetcher = fetch) {
       const path = url.pathname;
       const address = clientAddress(request, config);
 
+      if (!nativeStore && (path.startsWith('/api/shop/') || path === '/api/contact' || path === '/api/waitlist')) {
+        throw new HttpError(404, 'This service is available in the local checkout preview.');
+      }
       if (path === '/api/health') {
         httpMethod(request, response, 'GET', 'HEAD');
         reply(request, response, 200, { ok: true });
@@ -94,8 +97,8 @@ export async function createApp(config = configFrom(), fetcher = fetch) {
         const { enabled, domain, categoryHandles, featuredCollection, accountUrl } = config.store;
         reply(request, response, 200, {
           store: { enabled, domain, categoryHandles, featuredCollection, accountUrl },
-          nativeStore: !enabled,
-          razorpay: { enabled: config.razorpay.enabled, keyId: config.razorpay.keyId },
+          nativeStore: config.nativePreview,
+          razorpay: { enabled: config.razorpay.enabled, keyId: config.razorpay.enabled ? config.razorpay.keyId : '' },
           supportEmail: config.supportEmail,
           newsletter: {
             resendEnabled: config.newsletter.enabled,
@@ -171,7 +174,7 @@ export async function createApp(config = configFrom(), fetcher = fetch) {
         }
       } else if (path === '/newsletter/confirm' || path === '/newsletter/unsubscribe') {
         httpMethod(request, response, 'GET', 'HEAD', 'POST');
-        if (config.newsletter.secret.length < 32) throw new HttpError(404, 'This page could not be found.');
+        if (!config.newsletter.enabled && !config.newsletter.localEnabled) throw new HttpError(404, 'This page could not be found.');
         // Keep the form's Origin header and avoid passing its token in a referrer URL.
         response.setHeader('Referrer-Policy', 'strict-origin');
         const action = path.slice('/newsletter/'.length);

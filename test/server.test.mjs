@@ -45,7 +45,8 @@ test('server serves only public files, emits browser security headers, and expos
     const configRes = await fetch(fixture.origin + '/api/config');
     assert.equal(configRes.headers.get('cache-control'), 'no-store');
     const configJson = await configRes.json();
-    assert.equal(configJson.nativeStore, true);
+    assert.equal(configJson.nativeStore, false);
+    assert.equal((await fetch(fixture.origin + '/api/shop/catalog')).status, 404);
     assert.throws(() => configFrom({ APP_ORIGIN: 'http://public.example' }), /HTTPS/);
     assert.throws(() => configFrom({ DATABASE_PATH: 'docs/site.sqlite' }), /outside/);
   } finally {
@@ -54,7 +55,7 @@ test('server serves only public files, emits browser security headers, and expos
 });
 
 test('native D2C checkout enforces prices, stock, discounts, COD orders, and secure tracking', async () => {
-  const fixture = await openTestServer({}, () => {
+  const fixture = await openTestServer({ NATIVE_CHECKOUT_PREVIEW: 'true' }, () => {
     throw new Error('Unexpected outbound request for COD');
   });
   const { origin } = fixture;
@@ -152,7 +153,7 @@ test('Razorpay order creation and HMAC-SHA256 payment verification work securely
   const rzpPaymentId = 'pay_RazorpayFixture99';
 
   const fixture = await openTestServer(
-    { RAZORPAY_KEY_ID: keyId, RAZORPAY_KEY_SECRET: keySecret },
+    { NATIVE_CHECKOUT_PREVIEW: 'true', RAZORPAY_KEY_ID: keyId, RAZORPAY_KEY_SECRET: keySecret },
     async (url, request) => {
       assert.equal(url, 'https://api.razorpay.com/v1/orders');
       const body = JSON.parse(request.body);
@@ -225,7 +226,7 @@ test('Razorpay order creation and HMAC-SHA256 payment verification work securely
 });
 
 test('contact support, Phase 2 waitlist, and local newsletter consent work with validation', async () => {
-  const fixture = await openTestServer({}, () => {
+  const fixture = await openTestServer({ NATIVE_CHECKOUT_PREVIEW: 'true' }, () => {
     throw new Error('Unexpected external call');
   });
   const { origin } = fixture;

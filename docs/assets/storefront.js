@@ -124,7 +124,7 @@ function shopIntro(title, description) {
 
 async function renderCatalog(target) {
   const featured = target.dataset.liveCatalog === 'featured';
-  const requested = new URLSearchParams(location.search).get('category');
+  const requested = target.dataset.categoryHandle || new URLSearchParams(location.search).get('category');
   const category = featured
     ? (validHandle(featuredCollection) ? featuredCollection : '')
     : (categoryKeys.includes(requested) ? requested : '');
@@ -138,7 +138,7 @@ async function renderCatalog(target) {
 
   try {
     const [selection, categories] = await Promise.all([
-      getProducts(category, size),
+    target.dataset.categoryHandle && !category ? null : getProducts(category, size),
       featured ? [] : getCategories().catch(() => [])
     ]);
     const collection = featured && !selection ? await getProducts('', size) : selection;

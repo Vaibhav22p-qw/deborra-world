@@ -416,6 +416,8 @@ button { cursor: pointer; }
 .founder { scroll-margin-top: 1.25rem; padding: 1.1rem 1.25rem; border: 1px solid var(--line); border-inline-start: 2px solid var(--gold-dark); background: var(--paper); }
 .founder .kicker { color: var(--gold-dark); }
 .founder h2 { margin: .35rem 0 0; }
+.founder h2 + p { margin-top: .6rem; }
+.founder__links { display: flex; flex-wrap: wrap; gap: .35rem 1.2rem; margin-top: .75rem; }
 .prose .faq-contact { margin-top: 1.5rem; }
 .contact-phone a { color: var(--ink); font-family: var(--serif); font-size: 2.25rem; line-height: 1; text-decoration-color: #b79963; text-underline-offset: .18em; }
 .article-image { margin-bottom: 2rem; }
