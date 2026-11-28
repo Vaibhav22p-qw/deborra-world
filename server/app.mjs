@@ -35,8 +35,8 @@ export async function createRequestHandler(config, fetcher = fetch, options = {}
   const database = Object.hasOwn(options, 'database') ? options.database : openDatabase(config.dbPath);
   const rate = database?.remote ? hostedLimiter(database) : limiter();
   const store = config.store.enabled ? createStore(config, database, fetcher) : null;
-  const nativeStore = config.nativePreview ? createNativeStore(config, database, fetcher) : null;
-  const newsletter = config.newsletter.manageEnabled ? createNewsletter(config, database, fetcher) : null;
+  const nativeStore = config.nativeStore && database ? createNativeStore(config, database, fetcher) : null;
+  const newsletter = config.newsletter.manageEnabled && database ? createNewsletter(config, database, fetcher) : null;
   const host = new URL(config.origin).host.toLowerCase();
 
   async function serveFile(request, response, url) {
@@ -89,8 +89,9 @@ export async function createRequestHandler(config, fetcher = fetch, options = {}
       const address = clientAddress(request, config);
 
       if (!nativeStore && (path.startsWith('/api/shop/') || path === '/api/contact' || path === '/api/waitlist')) {
-        throw new HttpError(404, 'This service is available in the local checkout preview.');
+        throw new HttpError(404, 'This endpoint is inactive.');
       }
+
       if (path === '/api/health') {
         httpMethod(request, response, 'GET', 'HEAD');
         reply(request, response, 200, { ok: true });
@@ -100,18 +101,18 @@ export async function createRequestHandler(config, fetcher = fetch, options = {}
         if (store && request.method === 'GET') store.session(request, response);
         reply(request, response, 200, {
           store: { enabled, domain, categoryHandles, featuredCollection, accountUrl },
-          nativeStore: config.nativePreview,
+          nativeStore: Boolean(nativeStore),
           razorpay: { enabled: config.razorpay.enabled, keyId: config.razorpay.enabled ? config.razorpay.keyId : '' },
           supportEmail: config.supportEmail,
           newsletter: {
             resendEnabled: config.newsletter.enabled,
-            localEnabled: config.newsletter.localEnabled
+            localEnabled: Boolean(newsletter && config.newsletter.localEnabled)
           }
         });
       } else if (path === '/api/shop/catalog') {
         httpMethod(request, response, 'GET', 'HEAD');
         await rate('native-catalog:' + address, 120, 60);
-        reply(request, response, 200, nativeStore.getCatalog());
+        reply(request, response, 200, await nativeStore.getCatalog());
       } else if (path === '/api/shop/checkout') {
         httpMethod(request, response, 'POST');
         writeOrigin(request, config);
@@ -124,26 +125,33 @@ export async function createRequestHandler(config, fetcher = fetch, options = {}
         writeOrigin(request, config);
         await rate('native-verify:' + address, 30, 300);
         const input = await readJson(request);
-        const result = nativeStore.verifyRazorpayPayment(input);
+        const result = await nativeStore.verifyRazorpayPayment(input);
+        reply(request, response, 200, result);
+      } else if (path === '/api/shop/razorpay/cancel') {
+        httpMethod(request, response, 'POST');
+        writeOrigin(request, config);
+        await rate('native-cancel:' + address, 30, 300);
+        const input = await readJson(request);
+        const result = await nativeStore.cancelRazorpayOrder(input);
         reply(request, response, 200, result);
       } else if (path === '/api/shop/orders/track') {
         httpMethod(request, response, 'GET', 'HEAD');
-        await rate('native-track:' + address, 40, 300);
-        const result = nativeStore.trackOrder(url.searchParams.get('id'), url.searchParams.get('contact'));
+        await rate('native-track:' + address, 15, 300);
+        const result = await nativeStore.trackOrder(url.searchParams.get('id'), url.searchParams.get('contact'));
         reply(request, response, 200, result);
       } else if (path === '/api/contact') {
         httpMethod(request, response, 'POST');
         writeOrigin(request, config);
         await rate('contact:' + address, 20, 3600);
         const input = await readJson(request);
-        const result = nativeStore.createSupportTicket(input);
+        const result = await nativeStore.createSupportTicket(input);
         reply(request, response, 201, result);
       } else if (path === '/api/waitlist') {
         httpMethod(request, response, 'POST');
         writeOrigin(request, config);
         await rate('waitlist:' + address, 30, 3600);
         const input = await readJson(request);
-        const result = nativeStore.joinWaitlist(input);
+        const result = await nativeStore.joinWaitlist(input);
         reply(request, response, 201, result);
       } else if (path.startsWith('/api/store/')) {
         httpMethod(request, response, 'GET', 'HEAD');
@@ -162,7 +170,7 @@ export async function createRequestHandler(config, fetcher = fetch, options = {}
         reply(request, response, 200, result);
       } else if (path === '/api/newsletter') {
         httpMethod(request, response, 'POST');
-        if (!config.newsletter.enabled && !config.newsletter.localEnabled) {
+        if (!newsletter || (!config.newsletter.enabled && !config.newsletter.localEnabled)) {
           throw new HttpError(404, 'Signups are currently closed.');
         }
         writeOrigin(request, config);
@@ -178,7 +186,6 @@ export async function createRequestHandler(config, fetcher = fetch, options = {}
       } else if (path === '/newsletter/confirm' || path === '/newsletter/unsubscribe') {
         httpMethod(request, response, 'GET', 'HEAD', 'POST');
         if (!newsletter) throw new HttpError(404, 'This page could not be found.');
-        // Keep the form's Origin header and avoid passing its token in a referrer URL.
         response.setHeader('Referrer-Policy', 'strict-origin');
         const action = path.slice('/newsletter/'.length);
         if (request.method === 'POST') {

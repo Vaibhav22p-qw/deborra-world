@@ -45,17 +45,17 @@ test('server serves only public files, emits browser security headers, and expos
     const configRes = await fetch(fixture.origin + '/api/config');
     assert.equal(configRes.headers.get('cache-control'), 'no-store');
     const configJson = await configRes.json();
-    assert.equal(configJson.nativeStore, false);
-    assert.equal((await fetch(fixture.origin + '/api/shop/catalog')).status, 404);
+    assert.equal(configJson.nativeStore, true);
     assert.throws(() => configFrom({ APP_ORIGIN: 'http://public.example' }), /HTTPS/);
     assert.throws(() => configFrom({ DATABASE_PATH: 'docs/site.sqlite' }), /outside/);
+    assert.throws(() => configFrom({ RAZORPAY_KEY_ID: 'bad_key', RAZORPAY_KEY_SECRET: 'sec' }), /Razorpay/);
   } finally {
     await fixture.close();
   }
 });
 
 test('native D2C checkout enforces prices, stock, discounts, COD orders, and secure tracking', async () => {
-  const fixture = await openTestServer({ NATIVE_CHECKOUT_PREVIEW: 'true' }, () => {
+  const fixture = await openTestServer({}, () => {
     throw new Error('Unexpected outbound request for COD');
   });
   const { origin } = fixture;
@@ -75,7 +75,7 @@ test('native D2C checkout enforces prices, stock, discounts, COD orders, and sec
     });
     assert.equal(crossOrigin.status, 403);
 
-    // Invalid PIN code rejected
+    // Invalid PIN code & invalid payment method rejected
     const badPin = await fetch(origin + '/api/shop/checkout', {
       method: 'POST',
       headers: { Origin: origin, 'Content-Type': 'application/json' },
@@ -146,20 +146,20 @@ test('native D2C checkout enforces prices, stock, discounts, COD orders, and sec
   }
 });
 
-test('Razorpay order creation and HMAC-SHA256 payment verification work securely', async () => {
-  const keyId = 'rzp_test_deborra123';
+test('Razorpay order creation, HMAC-SHA256 verification, and cancellation stock restore work securely', async () => {
+  const keyId = 'rzp_live_deborra123';
   const keySecret = 'secret_test_key_for_hmac_verification';
-  const rzpOrderId = 'order_RazorpayFixture1';
-  const rzpPaymentId = 'pay_RazorpayFixture99';
+  let seq = 0;
 
   const fixture = await openTestServer(
-    { NATIVE_CHECKOUT_PREVIEW: 'true', RAZORPAY_KEY_ID: keyId, RAZORPAY_KEY_SECRET: keySecret },
+    { RAZORPAY_KEY_ID: keyId, RAZORPAY_KEY_SECRET: keySecret },
     async (url, request) => {
       assert.equal(url, 'https://api.razorpay.com/v1/orders');
       const body = JSON.parse(request.body);
       assert.equal(body.currency, 'INR');
       assert.equal(body.amount, 70900); // 649 + 60 shipping = 709 INR = 70900 paise
-      return Response.json({ id: rzpOrderId, amount: body.amount, currency: 'INR' });
+      seq += 1;
+      return Response.json({ id: `order_RazorpayFixture${seq}`, amount: body.amount, currency: 'INR' });
     }
   );
   const { origin } = fixture;
@@ -171,21 +171,25 @@ test('Razorpay order creation and HMAC-SHA256 payment verification work securely
     const pageRes = await fetch(origin);
     assert.match(pageRes.headers.get('content-security-policy'), /checkout\.razorpay\.com/);
 
+    const payload = {
+      customerName: 'Neha Kulkarni',
+      email: 'neha@example.com',
+      phone: '9811122233',
+      address: { addressLine1: '501 Marine View', city: 'Mumbai', state: 'Maharashtra', pincode: '400020' },
+      items: [{ sku: 'DEB-RHO-100', quantity: 1 }],
+      paymentMethod: 'razorpay'
+    };
+
+    // 1. Create and verify order
     const checkoutRes = await fetch(origin + '/api/shop/checkout', {
       method: 'POST',
       headers: { Origin: origin, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        customerName: 'Neha Kulkarni',
-        email: 'neha@example.com',
-        phone: '9811122233',
-        address: { addressLine1: '501 Marine View', city: 'Mumbai', state: 'Maharashtra', pincode: '400020' },
-        items: [{ sku: 'DEB-RHO-100', quantity: 1 }],
-        paymentMethod: 'razorpay'
-      })
+      body: JSON.stringify(payload)
     });
     assert.equal(checkoutRes.status, 201);
     const created = await checkoutRes.json();
-    assert.equal(created.razorpayOrderId, rzpOrderId);
+    const rzpOrderId = created.razorpayOrderId;
+    const rzpPaymentId = 'pay_RazorpayFixture99';
     assert.equal(created.amountPaise, 70900);
     assert.equal(created.order.status, 'Pending Payment');
 
@@ -220,13 +224,40 @@ test('Razorpay order creation and HMAC-SHA256 payment verification work securely
     const verified = await goodVerify.json();
     assert.equal(verified.order.status, 'Confirmed');
     assert.match(verified.order.paymentStatus, /^Paid /);
+
+    // 2. Cancelled Razorpay modal restores stock
+    const stockBeforeCancel = (await (await fetch(origin + '/api/shop/catalog')).json()).products
+      .find((p) => p.slug === 'rosemary-hair-oil').variants[0].stock;
+
+    const secondCheckout = await (
+      await fetch(origin + '/api/shop/checkout', {
+        method: 'POST',
+        headers: { Origin: origin, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+    ).json();
+
+    const cancelRes = await fetch(origin + '/api/shop/razorpay/cancel', {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        orderId: secondCheckout.order.orderId,
+        razorpayOrderId: secondCheckout.razorpayOrderId
+      })
+    });
+    assert.equal(cancelRes.status, 200);
+    assert.equal((await cancelRes.json()).cancelled, true);
+
+    const stockAfterCancel = (await (await fetch(origin + '/api/shop/catalog')).json()).products
+      .find((p) => p.slug === 'rosemary-hair-oil').variants[0].stock;
+    assert.equal(stockAfterCancel, stockBeforeCancel);
   } finally {
     await fixture.close();
   }
 });
 
 test('contact support, Phase 2 waitlist, and local newsletter consent work with validation', async () => {
-  const fixture = await openTestServer({ NATIVE_CHECKOUT_PREVIEW: 'true' }, () => {
+  const fixture = await openTestServer({}, () => {
     throw new Error('Unexpected external call');
   });
   const { origin } = fixture;

@@ -23,9 +23,9 @@
 
 :root {
   color-scheme: light;
-  --forest: #102b22;
-  --dark: #0b211a;
-  --night: #081b15;
+  --forest: #0e2c21;
+  --dark: #091f17;
+  --night: #061610;
   --cream: #f7f4eb;
   --paper: #fdfbf5;
   --ink: #172d24;
@@ -121,7 +121,7 @@ button { cursor: pointer; }
 
 .brand-mark { display: inline-block; justify-self: start; width: fit-content; }
 .brand-mark img { object-fit: contain; }
-.site-header .brand-mark img { width: 78px; height: 52px; }
+.site-header .brand-mark img { width: 86px; height: 60px; }
 
 .primary-nav { display: flex; align-items: center; gap: clamp(1rem, 3vw, 2.6rem); }
 
@@ -740,11 +740,107 @@ html:has(.site-dialog[open]) { overflow: hidden; }
 
 @media (max-width: 960px) {
   .category-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .checkout-layout, .confirmation-grid, .tracking-layout { grid-template-columns: 1fr; }
+  .checkout-layout, .confirmation-grid, .tracking-layout, .emerald-standards__grid { grid-template-columns: 1fr; }
   .checkout-summary { position: static; }
 }
 
 @media (max-width: 650px) {
   .category-grid { grid-template-columns: 1fr; }
   .form-grid { grid-template-columns: 1fr; }
+  .emerald-standards__grid { grid-template-columns: 1fr; }
+  .standards-metrics { grid-template-columns: 1fr; }
+  .hero__crest { display: none; }
+}
+
+/* --- Luxury Emerald & Metallic Gold Refinements (Inspired by Reference Boards) --- */
+.button--pill { border-radius: 999px; gap: .6rem; padding-inline: 1.45rem; }
+.btn-arrow { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: #061610; color: #e8c991; font-size: .82rem; line-height: 1; }
+.hero {
+  background: radial-gradient(circle at 75% 32%, rgb(25 76 55 / 45%), transparent 56%), #061610;
+}
+.hero__crest {
+  position: absolute;
+  right: 1.2rem;
+  bottom: 3.1rem;
+  display: grid;
+  width: 102px;
+  height: 102px;
+  place-items: center;
+  border: 1px solid rgb(215 180 120 / 42%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgb(9 31 23 / 88%), rgb(6 22 16 / 94%));
+  box-shadow: 0 10px 30px rgb(0 0 0 / 35%), inset 0 0 0 4px rgb(215 180 120 / 10%);
+}
+.hero__crest img { width: 66px; height: 66px; object-fit: contain; }
+
+.emerald-standards {
+  background: radial-gradient(ellipse at 20% 20%, rgb(23 70 51 / 38%), transparent 60%), var(--night);
+  color: var(--cream);
+  border-block: 1px solid var(--dark-line);
+  padding-block: clamp(3.4rem, 6.2vw, 5.6rem);
+}
+.emerald-standards .eyebrow { color: var(--gold); }
+.emerald-standards__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(2rem, 5vw, 4.5rem);
+}
+.emerald-standards__pillars h2 {
+  margin: .7rem 0 1.45rem;
+  font-size: clamp(2.8rem, 4.8vw, 4.4rem);
+  letter-spacing: -.04em;
+}
+.emerald-standards__pillars h2 em { color: #e2c38c; }
+.standards-list { display: grid; gap: 1rem; margin: 0; padding: 0; list-style: none; }
+.standards-list li {
+  display: grid;
+  gap: .2rem;
+  padding-bottom: .9rem;
+  border-bottom: 1px solid var(--dark-line);
+}
+.standards-list li:last-child { border-bottom: 0; padding-bottom: 0; }
+.standards-list strong { color: #f0d7a2; font-size: .92rem; letter-spacing: .04em; text-transform: uppercase; }
+.standards-list span { color: #d5ddd0; font-size: .94rem; }
+
+.emerald-standards__panel {
+  padding: clamp(1.5rem, 3.5vw, 2.5rem);
+  border: 1px solid rgb(215 180 120 / 32%);
+  background: linear-gradient(155deg, rgb(14 44 33 / 90%), rgb(6 22 16 / 96%));
+}
+.monogram-crest { display: flex; align-items: center; gap: 1.15rem; padding-bottom: 1.35rem; border-bottom: 1px solid var(--dark-line); }
+.monogram-crest img { flex: none; width: 72px; height: 72px; object-fit: contain; }
+.monogram-crest .kicker { color: var(--gold); margin-bottom: .3rem; }
+.monogram-crest__copy { color: #dce3d5; font-size: .94rem; }
+
+.standards-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 1.35rem;
+}
+.standards-metrics > div { display: grid; gap: .2rem; }
+.standards-metrics strong { color: #e6c68e; font: 500 2rem/1 var(--serif); }
+.standards-metrics span { color: var(--pale); font-size: .82rem; }
+
+.detail-gallery { display: grid; gap: .85rem; }
+.detail-thumbs { display: flex; gap: .7rem; }
+.detail-thumb {
+  padding: 2px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  opacity: .72;
+  transition: opacity 150ms ease, border-color 150ms ease;
+}
+.detail-thumb:hover, .detail-thumb.is-active { opacity: 1; border-color: var(--forest); }
+.detail-thumb img { width: 76px; height: 76px; object-fit: cover; display: block; }
+
+.category-breadcrumbs { margin-bottom: 1.5rem; }
+.contact-submit { margin-top: 1rem; }
+.newsletter-optout { border: 0; background: transparent; color: inherit; padding: 0; margin-left: .35rem; }
+.footer-bottom__brand { display: flex; align-items: center; gap: .65rem; }
+.footer-seal { width: 26px; height: 26px; object-fit: contain; }
+
+@media (max-width: 780px) {
+  .hero__crest { display: none; }
 }

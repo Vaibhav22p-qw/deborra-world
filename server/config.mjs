@@ -60,12 +60,16 @@ export function configFrom(env = process.env) {
     .map((item) => item.trim())
     .filter((item) => hostPattern.test(item));
 
+  const isVercelWithoutTurso = env.VERCEL === '1' && (!env.TURSO_DATABASE_URL || !env.TURSO_AUTH_TOKEN);
+  const nativeStore = !storeEnabled && env.NATIVE_STORE_ENABLED !== 'false' && !isVercelWithoutTurso;
+
   const razorpayKeyId = env.RAZORPAY_KEY_ID?.trim() || '';
   const razorpayKeySecret = env.RAZORPAY_KEY_SECRET?.trim() || '';
-  const nativePreview = env.NATIVE_CHECKOUT_PREVIEW === 'true' && !secure && env.VERCEL !== '1' && !storeEnabled;
-  const razorpayEnabled = nativePreview && Boolean(razorpayKeyId && razorpayKeySecret);
-  if (nativePreview && (razorpayKeyId || razorpayKeySecret) && (!razorpayKeyId.startsWith('rzp_test_') || !razorpayKeySecret)) {
-    throw new Error('The local Razorpay checkout preview requires test credentials.');
+  const razorpayEnabled = nativeStore && Boolean(razorpayKeyId && razorpayKeySecret);
+  if (razorpayKeyId || razorpayKeySecret) {
+    if (!/^rzp_(?:live|test)_[A-Za-z0-9]+$/.test(razorpayKeyId) || !razorpayKeySecret) {
+      throw new Error('Razorpay requires a valid RAZORPAY_KEY_ID (rzp_live_... or rzp_test_...) and RAZORPAY_KEY_SECRET.');
+    }
   }
 
   const newsletterEnabled = env.NEWSLETTER_ENABLED === 'true';
@@ -93,7 +97,7 @@ export function configFrom(env = process.env) {
     dbPath,
     trustedProxy,
     supportEmail,
-    nativePreview,
+    nativeStore,
     razorpay: { enabled: razorpayEnabled, keyId: razorpayKeyId, keySecret: razorpayKeySecret },
     store: {
       enabled: storeEnabled,
@@ -106,8 +110,8 @@ export function configFrom(env = process.env) {
     },
     newsletter: {
       enabled: newsletterEnabled,
-      localEnabled: nativePreview && env.NEWSLETTER_LOCAL_CAPTURE !== 'false',
-      manageEnabled: newsletterSecret.length >= 32 || nativePreview,
+      localEnabled: nativeStore && env.NEWSLETTER_LOCAL_CAPTURE !== 'false',
+      manageEnabled: newsletterSecret.length >= 32 || nativeStore,
       sender,
       secret: localNewsletterSecret,
       resendKey,

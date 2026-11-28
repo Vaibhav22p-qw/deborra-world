@@ -1,16 +1,26 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { brand, discountCodes, products } from '../preview/native-catalog.mjs';
+import { brand, discountCodes, products } from '../scripts/content.mjs';
 import { HttpError } from './security.mjs';
 
 const validEmail = /^[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9](?:[A-Z0-9.-]*[A-Z0-9])?\.[A-Z]{2,63}$/i;
 const validIndianPhone = /^[6-9]\d{9}$/;
 const validPin = /^[1-9]\d{5}$/;
+const validOrderId = /^DEB-\d{4}-[A-F0-9]{6}$/;
+const hasControlChar = /[\x00-\x1F\x7F]/;
+const reservationTtlMs = 20 * 60 * 1000;
 
 export function createNativeStore(config, db, fetcher = fetch) {
   const variantCatalog = new Map();
+  for (const product of products) {
+    for (const variant of product.variants) {
+      variantCatalog.set(variant.id, { ...variant, product });
+    }
+  }
+
   const seedStock = db.prepare('INSERT OR IGNORE INTO product_inventory (sku, stock, updated_at) VALUES (?, ?, ?)');
   const getStock = db.prepare('SELECT stock FROM product_inventory WHERE sku = ?');
   const deductStock = db.prepare('UPDATE product_inventory SET stock = stock - ?, updated_at = ? WHERE sku = ? AND stock >= ?');
+  const restoreStock = db.prepare('UPDATE product_inventory SET stock = stock + ?, updated_at = ? WHERE sku = ?');
   const insertOrder = db.prepare(`
     INSERT INTO orders (
       order_id, created_at, status, payment_method, payment_status,
@@ -20,10 +30,21 @@ export function createNativeStore(config, db, fetcher = fetch) {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const findOrder = db.prepare('SELECT * FROM orders WHERE order_id = ?');
+  const findExpiredPending = db.prepare(`
+    SELECT order_id, items_json FROM orders WHERE status = 'Pending Payment' AND created_at < ?
+  `);
+  const markOrderExpired = db.prepare(`
+    UPDATE orders SET status = 'Cancelled (Expired)', payment_status = 'Payment Timed Out'
+    WHERE order_id = ? AND status = 'Pending Payment'
+  `);
+  const markOrderCancelled = db.prepare(`
+    UPDATE orders SET status = 'Cancelled', payment_status = 'Cancelled by Customer'
+    WHERE order_id = ? AND razorpay_order_id = ? AND status = 'Pending Payment'
+  `);
   const markOrderPaid = db.prepare(`
     UPDATE orders
     SET status = 'Confirmed', payment_status = ?, razorpay_payment_id = ?
-    WHERE order_id = ? AND razorpay_order_id = ?
+    WHERE order_id = ? AND razorpay_order_id = ? AND status = 'Pending Payment'
   `);
   const insertTicket = db.prepare(`
     INSERT INTO support_tickets (ticket_id, created_at, name, email, phone, topic, order_id, message)
@@ -34,31 +55,29 @@ export function createNativeStore(config, db, fetcher = fetch) {
     ON CONFLICT(email, product_slug) DO UPDATE SET created_at = excluded.created_at
   `);
 
-  const now = Date.now();
-  for (const product of products) {
-    for (const variant of product.variants) {
-      variantCatalog.set(variant.id, { ...variant, product });
-      seedStock.run(variant.id, variant.stock, now);
-    }
-  }
+  let seeded = false;
+  let lastSweep = 0;
 
-  function getCatalog() {
-    const liveProducts = products.map((product) => ({
-      slug: product.slug,
-      name: product.name,
-      category: product.category,
-      group: product.group,
-      format: product.format,
-      status: product.status,
-      stage: product.stage,
-      image: product.image,
-      alt: product.alt,
-      variants: product.variants.map((variant) => {
-        const row = getStock.get(variant.id);
-        return { ...variant, stock: row ? row.stock : variant.stock };
-      })
-    }));
-    return { brand, discountCodes, products: liveProducts };
+  async function ensureReady() {
+    const now = Date.now();
+    if (!seeded) {
+      for (const variant of variantCatalog.values()) {
+        await seedStock.run(variant.id, variant.stock, now);
+      }
+      seeded = true;
+    }
+    if (now - lastSweep > 60000) {
+      lastSweep = now;
+      const expired = await findExpiredPending.all(now - reservationTtlMs);
+      for (const row of expired) {
+        const res = await markOrderExpired.run(row.order_id);
+        if (res.changes === 1) {
+          for (const item of JSON.parse(row.items_json)) {
+            await restoreStock.run(item.quantity, now, item.sku);
+          }
+        }
+      }
+    }
   }
 
   function serializeOrder(row) {
@@ -81,7 +100,32 @@ export function createNativeStore(config, db, fetcher = fetch) {
     };
   }
 
+  async function getCatalog() {
+    await ensureReady();
+    const liveProducts = await Promise.all(
+      products.map(async (product) => ({
+        slug: product.slug,
+        name: product.name,
+        category: product.category,
+        group: product.group,
+        format: product.format,
+        status: product.status,
+        stage: product.stage,
+        image: product.image,
+        alt: product.alt,
+        variants: await Promise.all(
+          product.variants.map(async (variant) => {
+            const row = await getStock.get(variant.id);
+            return { ...variant, stock: row ? Number(row.stock) : variant.stock };
+          })
+        )
+      }))
+    );
+    return { brand, discountCodes, products: liveProducts };
+  }
+
   async function createOrder(input) {
+    await ensureReady();
     const customerName = typeof input.customerName === 'string' ? input.customerName.trim() : '';
     const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
     const rawPhone = typeof input.phone === 'string' ? input.phone.replace(/\D/g, '') : '';
@@ -92,18 +136,32 @@ export function createNativeStore(config, db, fetcher = fetch) {
     const city = typeof addr.city === 'string' ? addr.city.trim() : '';
     const state = typeof addr.state === 'string' ? addr.state.trim() : '';
     const pincode = typeof addr.pincode === 'string' ? addr.pincode.trim() : '';
-    const paymentMethod = input.paymentMethod === 'razorpay' ? 'razorpay' : 'cod';
 
-    if (customerName.length < 2 || customerName.length > 120 || !validEmail.test(email) || !validIndianPhone.test(phone)) {
+    if (input.paymentMethod !== 'cod' && input.paymentMethod !== 'razorpay') {
+      throw new HttpError(400, 'Select a valid payment method (Razorpay or COD).');
+    }
+    const paymentMethod = input.paymentMethod;
+
+    if (
+      customerName.length < 2 ||
+      customerName.length > 120 ||
+      hasControlChar.test(customerName) ||
+      !validEmail.test(email) ||
+      !validIndianPhone.test(phone)
+    ) {
       throw new HttpError(400, 'Enter a valid name, email address and 10-digit Indian mobile number.');
     }
     if (
       addressLine1.length < 5 ||
       addressLine1.length > 180 ||
+      hasControlChar.test(addressLine1) ||
+      hasControlChar.test(addressLine2) ||
       city.length < 2 ||
       city.length > 80 ||
+      hasControlChar.test(city) ||
       state.length < 2 ||
       state.length > 80 ||
+      hasControlChar.test(state) ||
       !validPin.test(pincode)
     ) {
       throw new HttpError(400, 'Enter a valid Indian delivery address, state and 6-digit PIN code.');
@@ -176,6 +234,7 @@ export function createNativeStore(config, db, fetcher = fetch) {
           receipt: orderId,
           notes: { customerName, phone }
         }),
+        redirect: 'error',
         signal: AbortSignal.timeout(10000)
       });
       if (!rzpRes.ok) {
@@ -200,15 +259,16 @@ export function createNativeStore(config, db, fetcher = fetch) {
           : 'Preview Recorded';
     const orderStatus = paymentMethod === 'razorpay' && config.razorpay.enabled ? 'Pending Payment' : 'Confirmed';
 
-    db.exec('BEGIN IMMEDIATE');
+    const deducted = [];
     try {
       for (const [sku, qty] of mergedItems) {
-        const res = deductStock.run(qty, timestamp, sku, qty);
+        const res = await deductStock.run(qty, timestamp, sku, qty);
         if (res.changes !== 1) {
           throw new HttpError(409, 'Requested quantity exceeds current stock for one or more items.');
         }
+        deducted.push([sku, qty]);
       }
-      insertOrder.run(
+      await insertOrder.run(
         orderId,
         timestamp,
         orderStatus,
@@ -227,13 +287,14 @@ export function createNativeStore(config, db, fetcher = fetch) {
         shippingPaise,
         totalPaise
       );
-      db.exec('COMMIT');
     } catch (error) {
-      db.exec('ROLLBACK');
+      for (const [sku, qty] of deducted) {
+        await restoreStock.run(qty, Date.now(), sku).catch(() => {});
+      }
       throw error;
     }
 
-    const saved = findOrder.get(orderId);
+    const saved = await findOrder.get(orderId);
     return {
       order: serializeOrder(saved),
       razorpayOrderId,
@@ -241,7 +302,7 @@ export function createNativeStore(config, db, fetcher = fetch) {
     };
   }
 
-  function verifyRazorpayPayment(input) {
+  async function verifyRazorpayPayment(input) {
     if (!config.razorpay.enabled) {
       throw new HttpError(400, 'Razorpay merchant keys are not configured on this server.');
     }
@@ -250,7 +311,12 @@ export function createNativeStore(config, db, fetcher = fetch) {
     const razorpayPaymentId = typeof input.razorpayPaymentId === 'string' ? input.razorpayPaymentId.trim() : '';
     const razorpaySignature = typeof input.razorpaySignature === 'string' ? input.razorpaySignature.trim() : '';
 
-    if (!orderId || !razorpayOrderId || !razorpayPaymentId || !/^[a-f0-9]{64}$/i.test(razorpaySignature)) {
+    if (
+      !validOrderId.test(orderId) ||
+      !/^order_[A-Za-z0-9]{6,40}$/.test(razorpayOrderId) ||
+      !/^[A-Za-z0-9_]{6,48}$/.test(razorpayPaymentId) ||
+      !/^[a-f0-9]{64}$/i.test(razorpaySignature)
+    ) {
       throw new HttpError(400, 'Invalid payment verification payload.');
     }
 
@@ -264,32 +330,54 @@ export function createNativeStore(config, db, fetcher = fetch) {
       throw new HttpError(400, 'Payment signature could not be verified.');
     }
 
-    const updated = markOrderPaid.run(`Paid (${razorpayPaymentId})`, razorpayPaymentId, orderId, razorpayOrderId);
+    const updated = await markOrderPaid.run(`Paid (${razorpayPaymentId})`, razorpayPaymentId, orderId, razorpayOrderId);
     if (updated.changes !== 1) {
-      throw new HttpError(404, 'Matching order not found for this payment.');
+      throw new HttpError(404, 'Matching pending order not found for this payment.');
     }
 
-    return { order: serializeOrder(findOrder.get(orderId)) };
+    return { order: serializeOrder(await findOrder.get(orderId)) };
   }
 
-  function trackOrder(orderIdInput, contactInput) {
+  async function cancelRazorpayOrder(input) {
+    const orderId = typeof input.orderId === 'string' ? input.orderId.trim() : '';
+    const razorpayOrderId = typeof input.razorpayOrderId === 'string' ? input.razorpayOrderId.trim() : '';
+    if (!validOrderId.test(orderId) || !razorpayOrderId) {
+      throw new HttpError(400, 'Invalid cancellation request.');
+    }
+    const existing = await findOrder.get(orderId);
+    if (!existing || existing.razorpay_order_id !== razorpayOrderId) {
+      throw new HttpError(404, 'Pending order not found.');
+    }
+    const res = await markOrderCancelled.run(orderId, razorpayOrderId);
+    if (res.changes === 1) {
+      const now = Date.now();
+      for (const item of JSON.parse(existing.items_json)) {
+        await restoreStock.run(item.quantity, now, item.sku);
+      }
+    }
+    return { cancelled: res.changes === 1 };
+  }
+
+  async function trackOrder(orderIdInput, contactInput) {
     const orderId = typeof orderIdInput === 'string' ? orderIdInput.trim().toUpperCase() : '';
     const contact = typeof contactInput === 'string' ? contactInput.trim().toLowerCase() : '';
-    if (!orderId || !contact) throw new HttpError(400, 'Enter both your Order ID and phone or email.');
+    if (!validOrderId.test(orderId) || !contact) {
+      throw new HttpError(400, 'Enter a valid Order ID and phone or email.');
+    }
 
-    const row = findOrder.get(orderId);
+    const row = await findOrder.get(orderId);
     if (!row) throw new HttpError(404, 'Order not found.');
 
     const digits = contact.replace(/\D/g, '').slice(-10);
     const matchesEmail = row.email.toLowerCase() === contact;
-    const matchesPhone = Boolean(digits && digits === row.phone);
+    const matchesPhone = Boolean(validIndianPhone.test(digits) && digits === row.phone);
     if (!matchesEmail && !matchesPhone) {
       throw new HttpError(404, 'Order not found for those contact details.');
     }
     return { order: serializeOrder(row) };
   }
 
-  function createSupportTicket(input) {
+  async function createSupportTicket(input) {
     const name = typeof input.name === 'string' ? input.name.trim() : '';
     const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
     const phone = typeof input.phone === 'string' ? input.phone.trim().slice(0, 20) : '';
@@ -297,24 +385,39 @@ export function createNativeStore(config, db, fetcher = fetch) {
     const orderId = typeof input.orderId === 'string' ? input.orderId.trim().slice(0, 40) : '';
     const message = typeof input.message === 'string' ? input.message.trim() : '';
 
-    if (name.length < 2 || name.length > 120 || !validEmail.test(email) || message.length < 5 || message.length > 2000) {
+    if (
+      name.length < 2 ||
+      name.length > 120 ||
+      hasControlChar.test(name) ||
+      !validEmail.test(email) ||
+      message.length < 5 ||
+      message.length > 2000
+    ) {
       throw new HttpError(400, 'Please enter your name, valid email and a message.');
     }
 
     const ticketId = `SUP-${randomBytes(3).toString('hex').toUpperCase()}`;
-    insertTicket.run(ticketId, Date.now(), name, email, phone, topic, orderId, message);
+    await insertTicket.run(ticketId, Date.now(), name, email, phone, topic, orderId, message);
     return { ticketId };
   }
 
-  function joinWaitlist(input) {
+  async function joinWaitlist(input) {
     const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
     const productSlug = typeof input.productSlug === 'string' ? input.productSlug.trim() : '';
     if (!validEmail.test(email) || !products.some((p) => p.slug === productSlug)) {
       throw new HttpError(400, 'Enter a valid email address and product.');
     }
-    upsertWaitlist.run(email, productSlug, Date.now());
+    await upsertWaitlist.run(email, productSlug, Date.now());
     return { accepted: true };
   }
 
-  return { getCatalog, createOrder, verifyRazorpayPayment, trackOrder, createSupportTicket, joinWaitlist };
+  return {
+    getCatalog,
+    createOrder,
+    verifyRazorpayPayment,
+    cancelRazorpayOrder,
+    trackOrder,
+    createSupportTicket,
+    joinWaitlist
+  };
 }
